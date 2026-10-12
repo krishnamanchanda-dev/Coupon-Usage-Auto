@@ -48,7 +48,7 @@ def main():
 
     print_categorization(flat_rows)
 
-    print(f"\n[4/4] Writing to 'test' tab in Google Sheet...")
+    print(f"\n[4/5] Writing to 'Coupon Usage' tab and updating Overall tab...")
     write_test_tab(flat_rows, dict(total_orders_by_day))
 
     print("\nDone.")

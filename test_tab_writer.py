@@ -8,6 +8,7 @@ Writes the 'test' tab with a clean styled layout matching the design:
 
 import os
 import warnings
+import datetime
 warnings.filterwarnings("ignore")
 
 from collections import defaultdict
@@ -20,6 +21,8 @@ from categorizer import (
 SPREADSHEET_ID = os.getenv("SHEET_ID", "1RBIngrxsQR2fWoksu83OU5YGCW5Idp7DLiVnTKp04fE")
 SERVICE_ACCOUNT_FILE = "service_account.json"
 TEST_TAB_NAME = "Coupon Usage"
+OVERALL_TAB_NAME = "Overall"
+AW_COL = 49  # column AW, 1-indexed (A=1 … Z=26, AA=27 … AW=49)
 
 # ── Layout constants ──────────────────────────────────────────────────────────
 CYAN_ROWS        = 2   # decorative rows at top
@@ -216,6 +219,62 @@ def _set_col_width(sheet_id, col_idx, width_px) -> dict:
             "fields": "pixelSize",
         }
     }
+
+
+def _parse_cell_date(cell_val) -> "datetime.date | None":
+    """Try to parse a spreadsheet cell value as a date. Returns date or None."""
+    if not cell_val:
+        return None
+    s = str(cell_val).strip()
+    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y",
+                "%d %b %Y", "%d-%b-%Y", "%d %B %Y"]:
+        try:
+            return datetime.datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    # Google Sheets stores dates as serial numbers (epoch = 1899-12-30)
+    try:
+        serial = float(s)
+        if 1 < serial < 100000:
+            return (datetime.date(1899, 12, 30) + datetime.timedelta(days=int(serial)))
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def update_overall_tab(sh, aggregated: dict) -> None:
+    """Write coupons_used / total_orders ratio to column AW of Overall tab per date."""
+    try:
+        ws = sh.worksheet(OVERALL_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping Overall update.")
+        return
+
+    col_a = ws.col_values(1)  # 1-indexed; returns list of strings
+
+    # Map ISO date string → 1-indexed row number
+    date_to_row: dict[str, int] = {}
+    for idx, cell_val in enumerate(col_a):
+        d = _parse_cell_date(cell_val)
+        if d:
+            date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
+
+    updates = []
+    for date_str, day in aggregated.items():
+        row_num = date_to_row.get(date_str)
+        if row_num is None:
+            print(f"  WARNING: {date_str} not found in Overall tab col A — skipping.")
+            continue
+        total_orders = day["total_orders"]
+        ratio = (day["total_coupon_used"] / total_orders) if total_orders > 0 else 0.0
+        cell = gspread.utils.rowcol_to_a1(row_num, AW_COL)  # e.g. "AW5"
+        updates.append({"range": cell, "values": [[ratio]]})
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print(f"  Updated column AW in '{OVERALL_TAB_NAME}' for {len(updates)} date(s).")
+    else:
+        print(f"  No matching dates found in '{OVERALL_TAB_NAME}' tab.")
 
 
 def aggregate_for_tab(flat_rows: list, total_orders_by_day: dict) -> dict:
@@ -430,6 +489,9 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     print(f"  Formatted {len(requests)} styling rules.")
     print(f"  {len(sorted_dates)} day(s) × {n_cols} coupon columns.")
     print(f"  Coupon Usage % section at row {pct_label_row}.")
+
+    print(f"\n[5/5] Updating Overall tab column AW...")
+    update_overall_tab(sh, aggregated)
 
 
 def print_categorization(flat_rows: list) -> None:
