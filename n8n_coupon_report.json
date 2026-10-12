@@ -2,17 +2,29 @@
   "name": "Swiss Beauty - Daily Coupon Report",
   "nodes": [
     {
+      "id": "node-note",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 80],
+      "parameters": {
+        "content": "## Setup checklist\n\n1. **Google Sheets credential** — Credentials → New → Google Sheets OAuth2. Replace `REPLACE_WITH_GOOGLE_SHEETS_CRED_ID` in the Read Sheet node.\n\n2. **Gmail credential** — Credentials → New → Gmail OAuth2. Replace `REPLACE_WITH_GMAIL_CRED_ID` in the Send Email node.\n\n3. **Sheet ID** — Replace `REPLACE_WITH_SHEET_ID` in the Read Sheet node with your Google Sheet ID.\n\n4. **Recipient email** — Update REPORT_TO in the Set Config node.\n\n5. **Timing** — Runs at 08:10 IST (02:40 UTC), 10 min after the GitHub Actions Python script. Adjust if needed.\n\n6. **Activate** — Toggle the workflow to Active.\n\n---\nPre-requisite: Python script (GitHub Actions) must run first — it writes the `Email_Data` tab that this workflow reads.",
+        "height": 200,
+        "width": 760
+      }
+    },
+    {
       "id": "node-schedule",
-      "name": "Daily 8 AM IST",
+      "name": "Daily 8:10 AM IST",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
-      "position": [200, 300],
+      "position": [200, 340],
       "parameters": {
         "rule": {
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "30 2 * * *"
+              "expression": "40 2 * * *"
             }
           ]
         }
@@ -23,27 +35,21 @@
       "name": "Set Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.3,
-      "position": [440, 300],
+      "position": [440, 340],
       "parameters": {
         "mode": "manual",
         "assignments": {
           "assignments": [
             {
               "id": "cfg-1",
-              "name": "TOKEN_API_KEY",
-              "value": "REPLACE_WITH_YOUR_TOKEN_API_KEY",
+              "name": "REPORT_TO",
+              "value": "sahil.gaur@swissbeauty.in",
               "type": "string"
             },
             {
               "id": "cfg-2",
-              "name": "SHOP_DOMAIN",
-              "value": "swiss-beauty-dev.myshopify.com",
-              "type": "string"
-            },
-            {
-              "id": "cfg-3",
-              "name": "REPORT_TO",
-              "value": "sahil.gaur@swissbeauty.in",
+              "name": "SHEET_ID",
+              "value": "REPLACE_WITH_SHEET_ID",
               "type": "string"
             }
           ]
@@ -52,57 +58,56 @@
       }
     },
     {
-      "id": "node-token",
-      "name": "Get Shopify Token",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [680, 300],
+      "id": "node-read-sheet",
+      "name": "Read Email_Data Tab",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [680, 340],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      },
       "parameters": {
-        "method": "POST",
-        "url": "https://backgroundprocessor.swiss-custom.site/api/public/token/generate",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "={{ $('Set Config').item.json.TOKEN_API_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" }
-          ]
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Set Config').item.json.SHEET_ID }}",
+          "mode": "id"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "{\"scopes\":[\"read_all_orders\",\"read_products\",\"read_customers\",\"read_inventory\",\"read_orders\"]}"
+        "sheetName": {
+          "__rl": true,
+          "value": "Email_Data",
+          "mode": "name"
+        },
+        "options": {
+          "valueRenderMode": "FORMATTED_VALUE",
+          "range": "A1:D100"
+        },
+        "filtersUI": {}
       }
     },
     {
-      "id": "node-fetch",
-      "name": "Fetch Orders & Aggregate",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [920, 300],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "// ── CONFIG ──────────────────────────────────────────────────\nconst cfg = $('Set Config').first().json;\nconst token = $('Get Shopify Token').first().json.data.token;\nconst shopDomain = cfg.SHOP_DOMAIN;\nconst apiVersion = '2024-01';\n\n// ── IST DATE HELPERS ─────────────────────────────────────────\nconst IST_MS = 19800000; // 5h30m\nfunction istMidnightUTC(offsetDays) {\n  const now = new Date(Date.now() + IST_MS);\n  const ist = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays);\n  return new Date(Date.UTC(ist.getFullYear(), ist.getMonth(), ist.getDate()) - IST_MS);\n}\nconst minUTC = istMidnightUTC(-1).toISOString();\nconst maxUTC = istMidnightUTC(0).toISOString();\nconst nowIST = new Date(Date.now() + IST_MS);\nconst yd = new Date(nowIST.getFullYear(), nowIST.getMonth(), nowIST.getDate() - 1);\nconst dateStr = `${yd.getFullYear()}-${String(yd.getMonth()+1).padStart(2,'0')}-${String(yd.getDate()).padStart(2,'0')}`;\n\n// ── CATEGORIZER (mirrors categorizer.py exactly) ─────────────\nconst NAMED = {save30:'SAVE30',save25:'SAVE25',save35:'SAVE35',stealdeal:'STEALDEAL',buy3:'BUY3','buy3at699':'BUY3@699',buy4:'BUY4',buy5:'BUY5',buy6:'BUY6',buy10:'BUY10',b3p2:'B3P2',b2g2:'B2G2',modern20:'MODERN20',gpay:'GPAY',fullcb:'FULLCB',freelipstick:'FREELIPSTICK',lips5:'LIPS5',free5:'FREE5',free6:'FREE6',freevanity:'FREEVANITY',luxevanity:'LUXEVANITY',freekit:'FREEKIT',lipluxe:'LIPLUXE','5pcs':'5PCS','3pcs':'3PCS','4pcs':'4PCS',special4:'SPECIAL4',special5:'SPECIAL5',special6:'SPECIAL6',get4:'GET4',get2:'GET2',luxe3:'LUXE3','6pcskit':'6PCS KIT','4pcskit':'4PCS KIT'};\nconst NAMED_ORDER = ['save30','save25','save35','stealdeal','buy3','buy3at699','buy4','buy5','buy6','buy10','b3p2','b2g2','modern20','gpay','fullcb','freelipstick','lips5','free5','free6','freevanity','luxevanity','freekit','lipluxe','5pcs','3pcs','4pcs','special4','special5','special6','get4','get2','luxe3','6pcskit','4pcskit'];\nconst ALL_COLS = [...NAMED_ORDER, 'pp', 'influencer', 'others'];\nconst EXCL_S = ['c2p','prepaid','bundle','cashback'];\nconst EXCL_E = new Set(['nil','creatororder','customdiscount']);\nconst PP_S = ['unloq','wishlink','ck'];\nconst OTH_P = ['emp','swiss','welcome','beauty','sbn','sb','bogo'];\n\nfunction norm(c) { return c.toLowerCase().replace(/[\\s-]/g,'').trim(); }\nfunction cat(raw) {\n  const k = norm(raw), u = raw.replace(/\\s/g,'').toUpperCase();\n  if (EXCL_E.has(k)) return 'excluded';\n  for (const s of EXCL_S) if (k.includes(s)) return 'excluded';\n  if (NAMED[k]) return k;\n  for (const s of PP_S) if (k.includes(s)) return 'pp';\n  for (const p of OTH_P) if (k.startsWith(p)) return 'others';\n  if (/^[A-Za-z]{3,}\\d{2,}$/.test(raw.trim())) return 'influencer';\n  if (/^[A-Z0-9]{8,}$/.test(u)) return 'pp';\n  return 'others';\n}\n\n// ── FETCH ALL ORDERS (cursor pagination) ─────────────────────\nlet orders = [];\nlet nextUrl = `https://${shopDomain}/admin/api/${apiVersion}/orders.json?status=any&fields=id,created_at,discount_codes,total_discounts&limit=250&created_at_min=${minUTC}&created_at_max=${maxUTC}`;\nwhile (nextUrl) {\n  const res = await this.helpers.httpRequest({\n    method: 'GET',\n    url: nextUrl,\n    headers: { 'X-Shopify-Access-Token': token },\n    returnFullResponse: true\n  });\n  orders = orders.concat(res.body?.orders || []);\n  const lh = res.headers?.link || '';\n  const m = lh.match(/<([^>]+)>;\\s*rel=\"next\"/);\n  nextUrl = m ? m[1] : null;\n}\n\n// ── AGGREGATE ────────────────────────────────────────────────\nlet totalOrders = 0;\nconst B = {};\nfor (const k of ALL_COLS) B[k] = { count: 0, disc: 0 };\n\nfor (const o of orders) {\n  totalOrders++;\n  const codes = o.discount_codes || [];\n  for (const dc of codes) {\n    const c = cat(dc.code || '');\n    if (c === 'excluded') continue;\n    const t = B[c] !== undefined ? c : 'others';\n    B[t].count++;\n    B[t].disc += parseFloat(dc.amount || '0');\n  }\n}\n\nconst totalCoupon = ALL_COLS.reduce((s, k) => s + B[k].count, 0);\nconst totalDiscRaw = ALL_COLS.reduce((s, k) => s + B[k].disc, 0);\nconst overallPct = totalOrders > 0 ? (totalCoupon / totalOrders * 100).toFixed(1) : '0.0';\n\n// ── PERCENTAGE ROUNDING (largest-remainder, mirrors Python) ──\nfunction lrPct(buckets, keys, total) {\n  if (!total) return Object.fromEntries(keys.map(k => [k, '0.0']));\n  const exact = Object.fromEntries(keys.map(k => [k, buckets[k].count / total * 1000]));\n  const floored = Object.fromEntries(keys.map(k => [k, Math.floor(exact[k])]));\n  const remainder = Object.fromEntries(keys.map(k => [k, exact[k] - floored[k]]));\n  let extra = 1000 - keys.reduce((s, k) => s + floored[k], 0);\n  keys.slice().sort((a, b) => remainder[b] - remainder[a]).slice(0, extra).forEach(k => floored[k]++);\n  return Object.fromEntries(keys.map(k => [k, (floored[k] / 10).toFixed(1)]));\n}\nconst pcts = lrPct(B, ALL_COLS, totalCoupon);\n\n// ── BUILD BREAKDOWN (non-zero rows, sorted count desc) ───────\nconst DISPLAY = { pp: 'PP (Paid Promotion)', influencer: 'Influencer / Marketing', others: 'Others' };\nconst breakdown = ALL_COLS\n  .map(k => ({\n    display: NAMED[k] || DISPLAY[k] || k.toUpperCase(),\n    count: B[k].count,\n    pct: pcts[k],\n    disc: Math.round(B[k].disc * 0.25)\n  }))\n  .filter(r => r.count > 0)\n  .sort((a, b) => b.count - a.count);\n\nreturn [{ json: {\n  dateStr, totalOrders, totalCoupon, overallPct,\n  totalDisc: Math.round(totalDiscRaw * 0.25),\n  breakdown\n} }];"
-      }
-    },
-    {
-      "id": "node-email-build",
+      "id": "node-build-email",
       "name": "Build Email HTML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1160, 300],
+      "position": [920, 340],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const d = $input.first().json;\nconst reportTo = $('Set Config').first().json.REPORT_TO;\nconst fmt = n => Math.round(n).toLocaleString('en-IN');\nconst MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nconst [y, mo, dy] = d.dateStr.split('-');\nconst label = `${parseInt(dy)} ${MONTHS[parseInt(mo)-1]} ${y}`;\n\nconst rows = d.breakdown.map((r, i) => {\n  const isBucket = ['PP (Paid Promotion)','Influencer / Marketing','Others'].includes(r.display);\n  const bg = i % 2 === 0 ? '#ffffff' : '#f8f9fa';\n  const fw = isBucket ? '600' : '400';\n  const color = isBucket ? '#444' : '#333';\n  return `<tr style=\"background:${bg}\">\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;font-weight:${fw};color:${color}\">${r.display}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${fmt(r.count)}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${r.pct}%</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">&#8377;${fmt(r.disc)}</td>\n  </tr>`;\n}).join('');\n\nconst generatedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/></head>\n<body style=\"margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"660\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.10)\">\n\n  <tr><td style=\"background:#1a1a2e;padding:28px 36px\">\n    <p style=\"margin:0 0 4px;color:#f5a623;font-size:11px;letter-spacing:3px;text-transform:uppercase\">Swiss Beauty Analytics</p>\n    <h1 style=\"margin:0 0 6px;color:#ffffff;font-size:24px;font-weight:700\">Daily Coupon Report</h1>\n    <p style=\"margin:0;color:#aaaacc;font-size:14px\">&#128197;&nbsp;${label}</p>\n  </td></tr>\n\n  <tr><td style=\"padding:28px 36px 16px\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n    <tr>\n      <td style=\"background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#e65100\">${fmt(d.totalOrders)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Total Orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#2e7d32\">${fmt(d.totalCoupon)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Coupons Used</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#1565c0\">${d.overallPct}%</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Overall Usage Rate</div>\n        <div style=\"font-size:9px;color:#aaa;margin-top:2px\">coupons / total orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#6a1b9a\">&#8377;${fmt(d.totalDisc)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Disc Amt &#xD7;0.25</div>\n      </td>\n    </tr>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"padding:8px 36px 32px\">\n    <p style=\"margin:0 0 12px;font-size:13px;font-weight:700;color:#1a1a2e;text-transform:uppercase;letter-spacing:1px\">Coupon-wise Breakdown</p>\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"font-size:13px;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden\">\n      <thead>\n        <tr style=\"background:#1a1a2e;color:#fff\">\n          <th style=\"padding:11px 16px;text-align:left;font-weight:600;font-size:12px\">Coupon</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Count</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">% of Usage</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Disc Amt (&#xD7;0.25)</th>\n        </tr>\n      </thead>\n      <tbody>\n        ${rows}\n        <tr style=\"background:#f0f0f0;font-weight:700\">\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e\">TOTAL</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">${fmt(d.totalCoupon)}</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">100.0%</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">&#8377;${fmt(d.totalDisc)}</td>\n        </tr>\n      </tbody>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"background:#f8f9fa;padding:14px 36px;border-top:1px solid #eee\">\n    <p style=\"margin:0;font-size:11px;color:#aaa\">Auto-generated by Swiss Beauty Coupon Automation &middot; ${generatedAt} IST</p>\n  </td></tr>\n\n</table>\n</td></tr>\n</table>\n</body></html>`;\n\nreturn [{ json: {\n  to: reportTo,\n  subject: `Swiss Beauty Coupon Report \\u2014 ${label}`,\n  html\n} }];"
+        "jsCode": "// Rows come in as individual items from Google Sheets node\n// Row 0 (first item): meta  — date, total_orders, total_coupon, overall_pct\n// Row 1 (second item): header row — skip\n// Row 2+ (remaining): coupon data — Coupon, Count, % of Usage, Disc Amt\n\nconst items = $input.all();\nif (!items || items.length < 3) {\n  throw new Error('Email_Data tab has insufficient data — did the Python script run?');\n}\n\nconst meta = items[0].json;\nconst dateStr   = String(Object.values(meta)[0] || '');\nconst totalOrders = Number(Object.values(meta)[1] || 0);\nconst totalCoupon = Number(Object.values(meta)[2] || 0);\nconst overallPct  = String(Object.values(meta)[3] || '0.0');\n\n// Coupon rows start at index 2 (skip header at index 1)\nconst couponRows = items.slice(2).map(it => {\n  const v = Object.values(it.json);\n  return { display: String(v[0]||''), count: Number(v[1]||0), pct: String(v[2]||'0.0%'), disc: Number(v[3]||0) };\n}).filter(r => r.count > 0);\n\n// Date label\nconst MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nlet label = dateStr;\ntry {\n  const [y, mo, dy] = dateStr.split('-');\n  label = `${parseInt(dy)} ${MONTHS[parseInt(mo)-1]} ${y}`;\n} catch(e) { label = dateStr; }\n\nconst fmt = n => Math.round(n).toLocaleString('en-IN');\n\nconst rows = couponRows.map((r, i) => {\n  const isBucket = ['PP (Paid Promotion)','Influencer / Marketing','Others'].includes(r.display);\n  const bg  = i % 2 === 0 ? '#ffffff' : '#f8f9fa';\n  const fw  = isBucket ? '600' : '400';\n  return `<tr style=\"background:${bg}\">\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;font-weight:${fw}\">${r.display}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${fmt(r.count)}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${r.pct}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">&#8377;${fmt(r.disc)}</td>\n  </tr>`;\n}).join('');\n\nconst generatedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/></head>\n<body style=\"margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"660\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.10)\">\n\n  <tr><td style=\"background:#1a1a2e;padding:28px 36px\">\n    <p style=\"margin:0 0 4px;color:#f5a623;font-size:11px;letter-spacing:3px;text-transform:uppercase\">Swiss Beauty Analytics</p>\n    <h1 style=\"margin:0 0 6px;color:#ffffff;font-size:24px;font-weight:700\">Daily Coupon Report</h1>\n    <p style=\"margin:0;color:#aaaacc;font-size:14px\">&#128197;&nbsp;${label}</p>\n  </td></tr>\n\n  <tr><td style=\"padding:28px 36px 16px\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n    <tr>\n      <td style=\"background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#e65100\">${fmt(totalOrders)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Total Orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#2e7d32\">${fmt(totalCoupon)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Coupons Used</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#1565c0\">${overallPct}%</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Overall Usage Rate</div>\n        <div style=\"font-size:9px;color:#aaa;margin-top:2px\">coupons / total orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#6a1b9a\">&#8377;${fmt(couponRows.reduce((s,r)=>s+r.disc,0))}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Disc Amt &#xD7;0.25</div>\n      </td>\n    </tr>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"padding:8px 36px 32px\">\n    <p style=\"margin:0 0 12px;font-size:13px;font-weight:700;color:#1a1a2e;text-transform:uppercase;letter-spacing:1px\">Coupon-wise Breakdown</p>\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"font-size:13px;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden\">\n      <thead>\n        <tr style=\"background:#1a1a2e;color:#fff\">\n          <th style=\"padding:11px 16px;text-align:left;font-weight:600;font-size:12px\">Coupon</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Count</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">% of Usage</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Disc Amt (&#xD7;0.25)</th>\n        </tr>\n      </thead>\n      <tbody>\n        ${rows}\n        <tr style=\"background:#f0f0f0;font-weight:700\">\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e\">TOTAL</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">${fmt(totalCoupon)}</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">100.0%</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">&#8377;${fmt(couponRows.reduce((s,r)=>s+r.disc,0))}</td>\n        </tr>\n      </tbody>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"background:#f8f9fa;padding:14px 36px;border-top:1px solid #eee\">\n    <p style=\"margin:0;font-size:11px;color:#aaa\">Auto-generated by Swiss Beauty Coupon Automation &middot; ${generatedAt} IST</p>\n  </td></tr>\n\n</table>\n</td></tr>\n</table>\n</body></html>`;\n\nreturn [{ json: {\n  to: $('Set Config').first().json.REPORT_TO,\n  subject: `Swiss Beauty Coupon Report \\u2014 ${label}`,\n  html\n} }];"
       }
     },
     {
-      "id": "node-email-send",
+      "id": "node-send-email",
       "name": "Send Daily Report",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [1400, 300],
+      "position": [1160, 340],
       "credentials": {
         "gmailOAuth2": {
-          "id": "REPLACE_WITH_YOUR_GMAIL_CREDENTIAL_ID",
+          "id": "REPLACE_WITH_GMAIL_CRED_ID",
           "name": "Gmail account"
         }
       },
@@ -116,37 +121,20 @@
           "appendAttribution": false
         }
       }
-    },
-    {
-      "id": "node-note",
-      "name": "Setup Instructions",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [200, 100],
-      "parameters": {
-        "content": "## Setup checklist\n\n1. **Set Config node** — TOKEN_API_KEY and SHOP_DOMAIN are pre-filled. Update REPORT_TO if needed.\n\n2. **Gmail credential** — In n8n: Credentials → New → Gmail OAuth2. Replace `REPLACE_WITH_YOUR_GMAIL_CREDENTIAL_ID` in the Send node with the new credential ID.\n\n3. **Activate** — Toggle the workflow to Active. It runs daily at **08:00 IST (02:30 UTC)**.\n\n4. **Manual test** — Click \"Execute Workflow\" to test on demand (sends yesterday's data).\n\n---\nEmail contains: Total Orders · Coupons Used · Overall Usage % · Discount Amount (×0.25) · Full coupon-wise breakdown with count, % of coupon usage, disc amount",
-        "height": 180,
-        "width": 800
-      }
     }
   ],
   "connections": {
-    "Daily 8 AM IST": {
+    "Daily 8:10 AM IST": {
       "main": [
         [{ "node": "Set Config", "type": "main", "index": 0 }]
       ]
     },
     "Set Config": {
       "main": [
-        [{ "node": "Get Shopify Token", "type": "main", "index": 0 }]
+        [{ "node": "Read Email_Data Tab", "type": "main", "index": 0 }]
       ]
     },
-    "Get Shopify Token": {
-      "main": [
-        [{ "node": "Fetch Orders & Aggregate", "type": "main", "index": 0 }]
-      ]
-    },
-    "Fetch Orders & Aggregate": {
+    "Read Email_Data Tab": {
       "main": [
         [{ "node": "Build Email HTML", "type": "main", "index": 0 }]
       ]
@@ -160,9 +148,7 @@
   "active": false,
   "settings": {
     "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "saveManualExecutions": true
   },
   "meta": {
     "templateCredsSetupCompleted": false

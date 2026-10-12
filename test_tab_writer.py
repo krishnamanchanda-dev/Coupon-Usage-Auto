@@ -23,6 +23,7 @@ SERVICE_ACCOUNT_FILE = "service_account.json"
 TEST_TAB_NAME = "Coupon Usage"
 OVERALL_TAB_NAME = "Overall"
 AW_COL = 49  # column AW, 1-indexed (A=1 … Z=26, AA=27 … AW=49)
+EMAIL_DATA_TAB = "Email_Data"
 
 # ── Layout constants ──────────────────────────────────────────────────────────
 CYAN_ROWS        = 2   # decorative rows at top
@@ -302,6 +303,53 @@ def aggregate_for_tab(flat_rows: list, total_orders_by_day: dict) -> dict:
     return result
 
 
+def write_email_data_tab(sh, aggregated: dict) -> None:
+    """Write a flat, n8n-readable tab with yesterday's coupon data for email pickup."""
+    try:
+        ws = sh.worksheet(EMAIL_DATA_TAB)
+        ws.clear()
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=EMAIL_DATA_TAB, rows=100, cols=5)
+
+    # Use the most recent date (daily run has exactly one)
+    date_str = sorted(aggregated.keys())[-1]
+    day = aggregated[date_str]
+    buckets = day["buckets"]
+    total_coupon = day["total_coupon_used"]
+    total_orders = day["total_orders"]
+    overall_pct = f"{total_coupon / total_orders * 100:.1f}" if total_orders else "0.0"
+
+    # Largest-remainder percentages
+    if total_coupon:
+        exact = {k: buckets[k]["count"] / total_coupon * 1000 for k in ALL_COLUMNS}
+        floored = {k: int(v) for k, v in exact.items()}
+        remainder = {k: exact[k] - floored[k] for k in exact}
+        extra = 1000 - sum(floored.values())
+        for k in sorted(remainder, key=lambda k: remainder[k], reverse=True)[:extra]:
+            floored[k] += 1
+        pcts = {k: f"{floored[k] / 10:.1f}%" for k in ALL_COLUMNS}
+    else:
+        pcts = {k: "0.0%" for k in ALL_COLUMNS}
+
+    DISPLAY = {**{k: NAMED_COUPONS[k] for k in NAMED_ORDER},
+               "pp": "PP (Paid Promotion)", "influencer": "Influencer / Marketing", "others": "Others"}
+
+    coupon_rows = [
+        [DISPLAY.get(k, k.upper()), buckets[k]["count"], pcts[k],
+         round(buckets[k]["disc_amt"] * 0.25, 0)]
+        for k in ALL_COLUMNS if buckets[k]["count"] > 0
+    ]
+    coupon_rows.sort(key=lambda r: r[1], reverse=True)
+
+    all_rows = (
+        [[date_str, total_orders, total_coupon, overall_pct]]  # meta row
+        + [["Coupon", "Count", "% of Usage", "Disc Amt (x0.25)"]]  # header
+        + coupon_rows
+    )
+    ws.update("A1", all_rows, value_input_option="USER_ENTERED")
+    print(f"  Email_Data tab: {len(coupon_rows)} coupon rows for {date_str}.")
+
+
 def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     gc = _get_client()
     sh = gc.open_by_key(SPREADSHEET_ID)
@@ -492,6 +540,9 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
 
     print(f"\n[5/5] Updating Overall tab column AW...")
     update_overall_tab(sh, aggregated)
+
+    print(f"\n[6/6] Writing Email_Data tab for n8n pickup...")
+    write_email_data_tab(sh, aggregated)
 
 
 def print_categorization(flat_rows: list) -> None:
