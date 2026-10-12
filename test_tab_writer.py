@@ -303,15 +303,21 @@ def aggregate_for_tab(flat_rows: list, total_orders_by_day: dict) -> dict:
     return result
 
 
-def write_email_data_tab(sh, aggregated: dict) -> None:
-    """Write a flat, n8n-readable tab with yesterday's coupon data for email pickup."""
+def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
+    """Write a flat, n8n-readable tab with yesterday's coupon data for email pickup.
+
+    Row types:
+      meta          — key/value pairs (date, totals)
+      named         — individual named coupon rows
+      bucket_header — PP / INFLUENCER/MKTNG / OTHERS section header with totals
+      bucket_detail — individual coupon codes within a bucket
+    """
     try:
         ws = sh.worksheet(EMAIL_DATA_TAB)
         ws.clear()
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=EMAIL_DATA_TAB, rows=100, cols=5)
+        ws = sh.add_worksheet(title=EMAIL_DATA_TAB, rows=500, cols=5)
 
-    # Use the most recent date (daily run has exactly one)
     date_str = sorted(aggregated.keys())[-1]
     day = aggregated[date_str]
     buckets = day["buckets"]
@@ -331,23 +337,57 @@ def write_email_data_tab(sh, aggregated: dict) -> None:
     else:
         pcts = {k: "0.0%" for k in ALL_COLUMNS}
 
-    DISPLAY = {**{k: NAMED_COUPONS[k] for k in NAMED_ORDER},
-               "pp": "PP (Paid Promotion)", "influencer": "Influencer / Marketing", "others": "Others"}
+    NAMED_DISPLAY = {k: NAMED_COUPONS[k] for k in NAMED_ORDER}
+    BUCKET_LABEL = {"pp": "PP", "influencer": "INFLUENCER / MKTNG", "others": "OTHERS"}
 
-    coupon_rows = [
-        [DISPLAY.get(k, k.upper()), buckets[k]["count"], pcts[k],
+    # Individual coupons within each bucket (sourced from flat_rows)
+    bucket_details: dict = {k: [] for k in BUCKET_KEYS}
+    if flat_rows:
+        for r in flat_rows:
+            if r["date"] != date_str:
+                continue
+            cat = categorize(r["coupon_code"])
+            if cat in BUCKET_KEYS:
+                bucket_details[cat].append([
+                    "bucket_detail",
+                    r["coupon_code"],
+                    r["times_used"],
+                    "",
+                    round(r["total_discount_amount"] * 0.25, 0),
+                ])
+        for k in BUCKET_KEYS:
+            bucket_details[k].sort(key=lambda x: x[2], reverse=True)
+
+    # Named coupon rows (non-zero, sorted by count desc)
+    named_rows = [
+        ["named", NAMED_DISPLAY[k], buckets[k]["count"], pcts[k],
          round(buckets[k]["disc_amt"] * 0.25, 0)]
-        for k in ALL_COLUMNS if buckets[k]["count"] > 0
+        for k in NAMED_ORDER if buckets[k]["count"] > 0
     ]
-    coupon_rows.sort(key=lambda r: r[1], reverse=True)
+    named_rows.sort(key=lambda r: r[2], reverse=True)
 
-    all_rows = (
-        [[date_str, total_orders, total_coupon, overall_pct]]  # meta row
-        + [["Coupon", "Count", "% of Usage", "Disc Amt (x0.25)"]]  # header
-        + coupon_rows
-    )
+    all_rows = [
+        ["row_type", "col1", "col2", "col3", "col4"],  # string headers — no integer key reordering
+        ["meta", "date",         date_str,     "", ""],
+        ["meta", "total_orders", total_orders, "", ""],
+        ["meta", "total_coupon", total_coupon, "", ""],
+        ["meta", "overall_pct",  overall_pct,  "", ""],
+    ]
+    all_rows.extend(named_rows)
+
+    for k in BUCKET_KEYS:
+        if buckets[k]["count"] == 0:
+            continue
+        all_rows.append([
+            "bucket_header", BUCKET_LABEL[k],
+            buckets[k]["count"], pcts[k],
+            round(buckets[k]["disc_amt"] * 0.25, 0),
+        ])
+        all_rows.extend(bucket_details.get(k, []))
+
     ws.update("A1", all_rows, value_input_option="USER_ENTERED")
-    print(f"  Email_Data tab: {len(coupon_rows)} coupon rows for {date_str}.")
+    detail_count = sum(len(v) for v in bucket_details.values())
+    print(f"  Email_Data tab: {len(named_rows)} named + {detail_count} bucket-detail rows for {date_str}.")
 
 
 def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
@@ -542,7 +582,7 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     update_overall_tab(sh, aggregated)
 
     print(f"\n[6/6] Writing Email_Data tab for n8n pickup...")
-    write_email_data_tab(sh, aggregated)
+    write_email_data_tab(sh, aggregated, flat_rows)
 
 
 def print_categorization(flat_rows: list) -> None:
