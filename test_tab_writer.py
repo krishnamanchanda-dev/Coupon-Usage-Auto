@@ -385,7 +385,7 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
         ])
         all_rows.extend(bucket_details.get(k, []))
 
-    ws.update("A1", all_rows, value_input_option="USER_ENTERED")
+    ws.update("A1", all_rows, value_input_option="RAW")  # RAW prevents "33.1%" being parsed as 0.331
     detail_count = sum(len(v) for v in bucket_details.values())
     print(f"  Email_Data tab: {len(named_rows)} named + {detail_count} bucket-detail rows for {date_str}.")
 
