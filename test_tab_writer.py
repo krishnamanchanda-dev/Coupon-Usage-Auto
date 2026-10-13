@@ -439,6 +439,37 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     print(f"  Email_Data tab: {len(named_rows)} named + {detail_count} bucket-detail rows for {date_str}.")
 
 
+_MONTHS_IDX = {
+    'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+}
+
+
+def _sort_key_label(label: str) -> tuple:
+    """Convert "12 Oct" → (10, 12) so rows sort chronologically."""
+    parts = label.strip().split()
+    if len(parts) == 2:
+        try:
+            return (_MONTHS_IDX.get(parts[1], 0), int(parts[0]))
+        except (ValueError, KeyError):
+            pass
+    return (0, 0)
+
+
+def _read_existing_rows(ws) -> tuple:
+    """
+    Read existing data rows from both tables.
+    Returns (top_rows, pct_rows) — lists of lists, one per non-empty date row.
+    """
+    top_end = DATA_START + MAX_DATA_ROWS - 1
+    pct_end = PCT_DATA_START + MAX_DATA_ROWS - 1
+    top_raw = ws.get(f"A{DATA_START}:ZZZ{top_end}") or []
+    pct_raw = ws.get(f"A{PCT_DATA_START}:ZZZ{pct_end}") or []
+    top_rows = [r for r in top_raw if r and str(r[0]).strip()]
+    pct_rows = [r for r in pct_raw if r and str(r[0]).strip()]
+    return top_rows, pct_rows
+
+
 def _build_pct_row(date_str: str, day: dict) -> list:
     total = day["total_coupon_used"]
     row = [_day_label(date_str)]
@@ -619,38 +650,53 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         print(f"  Full write: {len(sorted_dates)} day(s), % section fixed at row {PCT_SECTION_ROW}.")
 
     else:
-        # ── Append mode: only write new dates ────────────────────────────────
-        existing_count = len(state["top_date_labels"])
+        # ── Merge-sort-rewrite: read existing rows, merge with new, sort, rewrite ──
+        existing_top_raw, existing_pct_raw = _read_existing_rows(ws)
 
-        top_append_row = DATA_START + existing_count          # 1-indexed
-        pct_append_row = PCT_DATA_START + existing_count      # 1-indexed
+        # Index existing rows by date label
+        existing_top_by_label = {str(r[0]).strip(): r for r in existing_top_raw}
+        existing_pct_by_label = {str(r[0]).strip(): r for r in existing_pct_raw}
 
-        top_rows = []
-        pct_rows = []
-        for date_str in new_dates:
+        # Generate fresh rows for all dates in the current aggregated run
+        for date_str in sorted_dates:
+            label = _day_label(date_str)
             day = aggregated[date_str]
-            top_row = [_day_label(date_str), day["total_coupon_used"]]
+            top_row = [label, day["total_coupon_used"]]
             for col_key in ALL_COLUMNS:
                 b = day["buckets"][col_key]
                 top_row.append(b["count"] if b["count"] > 0 else 0)
                 top_row.append(round(b["disc_amt"] * 0.25, 0) if b["disc_amt"] > 0 else 0)
-            top_rows.append(top_row)
-            pct_rows.append(_build_pct_row(date_str, day))
+            existing_top_by_label[label] = top_row
+            existing_pct_by_label[label] = _build_pct_row(date_str, day)
 
-        ws.update(f"A{top_append_row}", top_rows, value_input_option="USER_ENTERED")
-        ws.update(f"A{pct_append_row}", pct_rows, value_input_option="USER_ENTERED")
+        # Sort all labels chronologically (oldest first)
+        sorted_labels = sorted(existing_top_by_label.keys(), key=_sort_key_label)
+        sorted_top_rows = [existing_top_by_label[l] for l in sorted_labels]
+        sorted_pct_rows = [
+            existing_pct_by_label.get(l, [l] + ["0.0%"] * len(ALL_COLUMNS))
+            for l in sorted_labels
+        ]
 
+        # Clear data sections then rewrite in sorted order
+        top_end = DATA_START + MAX_DATA_ROWS - 1
+        pct_end = PCT_DATA_START + MAX_DATA_ROWS - 1
+        ws.batch_clear([
+            f"A{DATA_START}:ZZZ{top_end}",
+            f"A{PCT_DATA_START}:ZZZ{pct_end}",
+        ])
+        ws.update(f"A{DATA_START}", sorted_top_rows, value_input_option="USER_ENTERED")
+        ws.update(f"A{PCT_DATA_START}", sorted_pct_rows, value_input_option="USER_ENTERED")
+
+        # Reformat all rows (reset bg first to clear stale alternating colors)
         requests = []
-        for i, date_str in enumerate(new_dates):
-            row_idx = existing_count + i
-            top_row_0 = top_append_row - 1 + i
-            pct_row_0 = pct_append_row - 1 + i
-            requests.extend(_format_data_row(sheet_id, top_row_0, row_idx, total_data_cols, n_cols))
-            requests.extend(_format_pct_row(sheet_id, pct_row_0, row_idx))
+        requests.append(_range_format(sheet_id, DATA_START - 1, top_end, 0, total_data_cols, bg=WHITE))
+        requests.append(_range_format(sheet_id, PCT_DATA_START - 1, pct_end, 0, len(ALL_COLUMNS) + 1, bg=WHITE))
+        for i, label in enumerate(sorted_labels):
+            requests.extend(_format_data_row(sheet_id, DATA_START - 1 + i, i, total_data_cols, n_cols))
+            requests.extend(_format_pct_row(sheet_id, PCT_DATA_START - 1 + i, i))
 
         _batch_update(sh, requests)
-        print(f"  Appended {len(new_dates)} new date(s) to both tables "
-              f"(top row {top_append_row}, % row {pct_append_row}).")
+        print(f"  Rewrote {len(sorted_labels)} date(s) in sorted order: {', '.join(sorted_labels)}.")
 
     print(f"\n[5/5] Updating Overall tab column AW...")
     update_overall_tab(sh, aggregated)
