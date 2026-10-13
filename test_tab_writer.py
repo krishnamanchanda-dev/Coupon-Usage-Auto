@@ -511,9 +511,20 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     Row types:
       meta          — key/value pairs (date, totals)
       named         — individual named coupon rows
-      bucket_header — PP / INFLUENCER/MKTNG / OTHERS section header with totals
+      bucket_header — PP / INFLUENCER/MKTNG / OTHERS / EXCLUDED section header
       bucket_detail — individual coupon codes within a bucket
+
+    col4 (disc_amt) is only populated for groups PP, OTHERS, EXCLUDED and for
+    specific named coupons; all others get "" so the emailer renders "—".
     """
+    # Named coupons that show disc_amt in the email
+    SHOW_DISC_NAMED = {
+        "FREELIPSTICK", "MODERN20", "FREEMAKEUPVANITY",
+        "FREEVANITY", "LUXEVANITY", "FREEPERFUME",
+    }
+    # Bucket keys whose header + detail rows show disc_amt
+    SHOW_DISC_BUCKETS = {"pp", "others", "excluded"}
+
     try:
         ws = sh.worksheet(EMAIL_DATA_TAB)
         ws.clear()
@@ -525,9 +536,10 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     buckets = day["buckets"]
     total_coupon = day["total_coupon_used"]
     total_orders = day["total_orders"]
+    excluded_count = day["excluded_count"]
     overall_pct = f"{total_coupon / total_orders * 100:.1f}" if total_orders else "0.0"
 
-    # Largest-remainder percentages
+    # Largest-remainder percentages (over total_coupon, for named/bucket rows)
     if total_coupon:
         exact = {k: buckets[k]["count"] / total_coupon * 1000 for k in ALL_COLUMNS}
         floored = {k: int(v) for k, v in exact.items()}
@@ -539,37 +551,52 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     else:
         pcts = {k: "0.0%" for k in ALL_COLUMNS}
 
-    NAMED_DISPLAY = {k: NAMED_COUPONS[k] for k in NAMED_ORDER}
-    BUCKET_LABEL = {"pp": "PP", "influencer": "INFLUENCER / MKTNG", "others": "OTHERS"}
+    # Excluded % uses total_orders as denominator (consistent with Coupon Usage sheet)
+    excl_pct = f"{excluded_count / total_orders * 100:.1f}%" if total_orders else "0.0%"
 
-    # Individual coupons within each bucket (sourced from flat_rows)
-    bucket_details: dict = {k: [] for k in BUCKET_KEYS}
+    NAMED_DISPLAY = {k: NAMED_COUPONS[k] for k in NAMED_ORDER}
+    BUCKET_LABEL = {
+        "pp": "PP",
+        "influencer": "INFLUENCER / MKTNG",
+        "others": "OTHERS",
+        "excluded": "EXCLUDED",
+    }
+
+    # Individual coupons within each bucket + excluded (from flat_rows)
+    bucket_details: dict = {k: [] for k in list(BUCKET_KEYS) + ["excluded"]}
+    excluded_total_disc = 0.0
     if flat_rows:
         for r in flat_rows:
             if r["date"] != date_str:
                 continue
             cat = categorize(r["coupon_code"])
+            disc_val = round(r["total_discount_amount"] * 0.25, 0)
             if cat in BUCKET_KEYS:
+                show_disc = cat in SHOW_DISC_BUCKETS
                 bucket_details[cat].append([
-                    "bucket_detail",
-                    r["coupon_code"],
-                    r["times_used"],
-                    "",
-                    round(r["total_discount_amount"] * 0.25, 0),
+                    "bucket_detail", r["coupon_code"], r["times_used"], "",
+                    disc_val if show_disc else "",
                 ])
-        for k in BUCKET_KEYS:
+            elif cat == "excluded":
+                excluded_total_disc += r["total_discount_amount"]
+                bucket_details["excluded"].append([
+                    "bucket_detail", r["coupon_code"], r["times_used"], "", disc_val,
+                ])
+        for k in list(BUCKET_KEYS) + ["excluded"]:
             bucket_details[k].sort(key=lambda x: x[2], reverse=True)
 
-    # Named coupon rows (non-zero, sorted by count desc)
-    named_rows = [
-        ["named", NAMED_DISPLAY[k], buckets[k]["count"], pcts[k],
-         round(buckets[k]["disc_amt"] * 0.25, 0)]
-        for k in NAMED_ORDER if buckets[k]["count"] > 0
-    ]
+    # Named coupon rows — disc_amt only for coupons in SHOW_DISC_NAMED
+    named_rows = []
+    for k in NAMED_ORDER:
+        if buckets[k]["count"] == 0:
+            continue
+        display = NAMED_DISPLAY[k]
+        disc = round(buckets[k]["disc_amt"] * 0.25, 0) if display in SHOW_DISC_NAMED else ""
+        named_rows.append(["named", display, buckets[k]["count"], pcts[k], disc])
     named_rows.sort(key=lambda r: r[2], reverse=True)
 
     all_rows = [
-        ["row_type", "col1", "col2", "col3", "col4"],  # string headers — no integer key reordering
+        ["row_type", "col1", "col2", "col3", "col4"],
         ["meta", "date",         date_str,     "", ""],
         ["meta", "total_orders", total_orders, "", ""],
         ["meta", "total_coupon", total_coupon, "", ""],
@@ -577,17 +604,22 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     ]
     all_rows.extend(named_rows)
 
+    # Named buckets (pp, influencer, others)
     for k in BUCKET_KEYS:
         if buckets[k]["count"] == 0:
             continue
-        all_rows.append([
-            "bucket_header", BUCKET_LABEL[k],
-            buckets[k]["count"], pcts[k],
-            round(buckets[k]["disc_amt"] * 0.25, 0),
-        ])
+        show_disc = k in SHOW_DISC_BUCKETS
+        disc = round(buckets[k]["disc_amt"] * 0.25, 0) if show_disc else ""
+        all_rows.append(["bucket_header", BUCKET_LABEL[k], buckets[k]["count"], pcts[k], disc])
         all_rows.extend(bucket_details.get(k, []))
 
-    ws.update("A1", all_rows, value_input_option="RAW")  # RAW prevents "33.1%" being parsed as 0.331
+    # Excluded section
+    if excluded_count > 0:
+        excl_disc = round(excluded_total_disc * 0.25, 0)
+        all_rows.append(["bucket_header", BUCKET_LABEL["excluded"], excluded_count, excl_pct, excl_disc])
+        all_rows.extend(bucket_details.get("excluded", []))
+
+    ws.update("A1", all_rows, value_input_option="RAW")
     detail_count = sum(len(v) for v in bucket_details.values())
     print(f"  Email_Data tab: {len(named_rows)} named + {detail_count} bucket-detail rows for {date_str}.")
 
