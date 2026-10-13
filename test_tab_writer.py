@@ -373,7 +373,7 @@ def _ensure_overall_excluded_cols(ws, sh) -> None:
     CP = Excluded count and CQ = No Coupon count, with Others shifting to CR.
     Idempotent — skips if CP header is already 'Excluded'.
     """
-    cp_header = str(ws.cell(1, 94).value or "").strip().lower()
+    cp_header = str(ws.cell(3, 94).value or "").strip().lower()
     if cp_header == "excluded":
         return  # already done
 
@@ -390,8 +390,8 @@ def _ensure_overall_excluded_cols(ws, sh) -> None:
             "inheritFromBefore": False,
         }
     }]})
-    # Write column headers for the two new columns
-    ws.update("CP1", [["Excluded", "No Coupon"]], value_input_option="RAW")
+    # Write column headers in row 3 (matching the Overall tab's header row)
+    ws.update("CP3", [["Excluded", "No Coupon"]], value_input_option="RAW")
     print("  One-time migration: inserted Excluded (CP) and No Coupon (CQ) before Others.")
 
 
