@@ -13,7 +13,13 @@ from config import ORDERS_CREATED_AT_MIN, ORDERS_CREATED_AT_MAX
 from token_manager import get_shopify_token
 from order_fetcher import iter_all_orders
 from aggregator import aggregate_coupons_by_day
-from test_tab_writer import write_test_tab, print_categorization
+from test_tab_writer import (
+    write_test_tab, print_categorization, _get_client, SPREADSHEET_ID,
+    update_overall_customer_rates,
+)
+from ga4_fetcher import fetch_marketing_sessions
+from shopify_analytics_fetcher import fetch_session_metrics, fetch_returning_customer_rate
+from product_deep_dive_writer import update_product_deep_dive
 
 
 def main():
@@ -50,6 +56,28 @@ def main():
 
     print(f"\n[4/5] Writing to 'Coupon Usage' tab and updating Overall tab...")
     write_test_tab(flat_rows, dict(total_orders_by_day))
+
+    print(f"\n[5/5] Updating Product Deep Dive tab...")
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    for date_str in total_orders_by_day:
+        try:
+            mktng_sessions = fetch_marketing_sessions(date_str)
+            shopify = fetch_session_metrics(date_str, token)
+            update_product_deep_dive(
+                sh, date_str,
+                mktng_sessions,
+                shopify["sessions"],
+                shopify["cart_additions"],
+            )
+        except Exception as e:
+            print(f"  WARNING: Product Deep Dive update failed for {date_str}: {e}")
+
+        try:
+            ret_rate = fetch_returning_customer_rate(date_str, token)
+            update_overall_customer_rates(sh, date_str, ret_rate)
+        except Exception as e:
+            print(f"  WARNING: Customer rate update failed for {date_str}: {e}")
 
     print("\nDone.")
 

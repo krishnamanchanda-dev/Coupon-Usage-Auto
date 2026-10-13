@@ -20,7 +20,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests gspread google-auth
+        run: pip install requests gspread google-auth google-analytics-data
 
       - name: Write service account credentials
         run: echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service_account.json
@@ -30,4 +30,5 @@ jobs:
           TOKEN_API_KEY: ${{ secrets.TOKEN_API_KEY }}
           SHOP_DOMAIN: ${{ secrets.SHOP_DOMAIN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
         run: python main.py

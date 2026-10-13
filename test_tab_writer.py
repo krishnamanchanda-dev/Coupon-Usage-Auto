@@ -477,6 +477,50 @@ def update_overall_tab(sh, aggregated: dict) -> None:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' tab.")
 
 
+# AJ = col 36 (new customer rate), AK = col 37 (returning customer rate)
+OVERALL_NEW_CUST_COL       = 36   # AJ
+OVERALL_RETURNING_CUST_COL = 37   # AK
+
+
+def update_overall_customer_rates(sh, date_str: str, returning_rate: float) -> None:
+    """
+    Write new_customer_rate (AJ) and returning_customer_rate (AK) for a single date.
+    returning_rate is a float (e.g. 0.3554); new_rate = 1 - returning_rate.
+    Both written as decimals so the sheet can format them as %.
+    """
+    try:
+        ws = sh.worksheet(OVERALL_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping customer rates.")
+        return
+
+    col_a = ws.col_values(1)
+    row_num = None
+    for idx, cell_val in enumerate(col_a):
+        d = _parse_cell_date(cell_val)
+        if d and d.strftime("%Y-%m-%d") == date_str:
+            row_num = idx + 1
+            break
+
+    if row_num is None:
+        print(f"  WARNING: {date_str} not found in Overall tab — skipping customer rates.")
+        return
+
+    new_rate = round(1.0 - returning_rate, 6)
+    aj = gspread.utils.rowcol_to_a1(row_num, OVERALL_NEW_CUST_COL)
+    ak = gspread.utils.rowcol_to_a1(row_num, OVERALL_RETURNING_CUST_COL)
+    ws.batch_update(
+        [
+            {"range": aj, "values": [[new_rate]]},
+            {"range": ak, "values": [[returning_rate]]},
+        ],
+        value_input_option="USER_ENTERED",
+    )
+    print(
+        f"  Overall AJ/AK for {date_str}: new={new_rate:.2%}, returning={returning_rate:.2%}"
+    )
+
+
 def aggregate_for_tab(flat_rows: list, total_orders_by_day: dict) -> dict:
     result = {}
     by_date = defaultdict(list)
