@@ -701,6 +701,18 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         # ── Full write (first time) ───────────────────────────────────────────
         ws.clear()
 
+        # Step 1: unmerge BEFORE writing values — ws.clear() doesn't clear merges,
+        # so old merge ranges would hide values written to secondary cells.
+        _batch_update(sh, [{
+            "unmergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0, "endRowIndex": 500,
+                    "startColumnIndex": 0, "endColumnIndex": 200,
+                }
+            }
+        }])
+
         # Coupon header row (now includes Total Orders, Excluded, No Coupon after Coupons Used)
         header_row = ["", "Coupons Used", "Total Orders", "Excluded", "No Coupon"]
         for col_key in ALL_COLUMNS:
@@ -724,29 +736,17 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         pct_hdr = ["Date"] + [_display(k) for k in ALL_COLUMNS] + ["Excluded %", "No Coupon %"]
         pct_data_rows = [_build_pct_row(d, aggregated[d]) for d in sorted_dates]
 
-        # Write header block (rows 3+)
-        blank_gap = [[] for _ in range(PCT_GAP)]
+        # Step 2: write values (merges are now gone so all cells are writable)
         top_block = [header_row] + data_rows
         ws.update(f"A{HEADER_ROW}", top_block, value_input_option="USER_ENTERED")
 
-        # Write % section at fixed row
         pct_block = [["COUPON USAGE %"], pct_hdr] + pct_data_rows
         ws.update(f"A{PCT_SECTION_ROW}", pct_block, value_input_option="USER_ENTERED")
 
         print("  Values written. Applying formatting...")
 
+        # Step 3: format + re-merge (no unmergeCells here)
         requests = []
-
-        # Unmerge everything
-        requests.append({
-            "unmergeCells": {
-                "range": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": 0, "endRowIndex": 500,
-                    "startColumnIndex": 0, "endColumnIndex": 200,
-                }
-            }
-        })
 
         # Cyan rows 1 & 2
         requests.append(_range_format(sheet_id, 0, CYAN_ROWS, 0, total_data_cols, bg=CYAN))
