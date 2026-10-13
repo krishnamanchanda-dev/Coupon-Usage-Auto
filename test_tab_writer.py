@@ -741,7 +741,25 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         return
 
     if is_first_run:
-        # ── Full write (first time) ───────────────────────────────────────────
+        # ── Full write (layout migration or new tab) ──────────────────────────
+        # Safety: read existing rows BEFORE clearing so historical dates survive
+        # even when a layout migration forces a full rewrite.
+        preserved_top = {}   # label → row list
+        preserved_pct = {}   # label → row list
+        if not is_new:
+            existing_top_raw, existing_pct_raw = _read_existing_rows(ws)
+            new_labels = {_day_label(d) for d in aggregated}
+            for r in existing_top_raw:
+                label = str(r[0]).strip()
+                if label and label not in new_labels:
+                    preserved_top[label] = r
+            for r in existing_pct_raw:
+                label = str(r[0]).strip()
+                if label and label not in new_labels:
+                    preserved_pct[label] = r
+            if preserved_top:
+                print(f"  Preserving {len(preserved_top)} existing row(s): {', '.join(sorted(preserved_top, key=_sort_key_label))}.")
+
         ws.clear()
 
         # Step 1: unmerge BEFORE writing values — ws.clear() doesn't clear merges,
@@ -756,34 +774,46 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             }
         }])
 
-        # Coupon header row (now includes Total Orders, Excluded, No Coupon after Coupons Used)
+        # Coupon header row (includes Total Orders, Excluded, No Coupon after Coupons Used)
         header_row = ["", "Coupons Used", "Total Orders", "Excluded", "No Coupon"]
         for col_key in ALL_COLUMNS:
             header_row.append(_display(col_key))
             header_row.append("")
 
-        # Top-table data rows
-        data_rows = []
+        # Build fresh rows for dates in current aggregated run
+        fresh_top = {}
+        fresh_pct = {}
         for date_str in sorted_dates:
+            label = _day_label(date_str)
             day = aggregated[date_str]
             no_coupon = max(0, day["total_orders"] - day["total_coupon_used"] - day["excluded_count"])
-            row = [_day_label(date_str), day["total_coupon_used"],
+            row = [label, day["total_coupon_used"],
                    day["total_orders"], day["excluded_count"], no_coupon]
             for col_key in ALL_COLUMNS:
                 b = day["buckets"][col_key]
                 row.append(b["count"] if b["count"] > 0 else 0)
                 row.append(round(b["disc_amt"] * 0.25, 0) if b["disc_amt"] > 0 else 0)
-            data_rows.append(row)
+            fresh_top[label] = row
+            fresh_pct[label] = _build_pct_row(date_str, day)
+
+        # Merge fresh + preserved, sort chronologically
+        all_top = {**preserved_top, **fresh_top}
+        all_pct = {**preserved_pct, **fresh_pct}
+        all_labels = sorted(all_top.keys(), key=_sort_key_label)
+        data_rows = [all_top[l] for l in all_labels]
+        pct_data_rows_merged = [
+            all_pct.get(l, [l] + ["0.0%"] * (len(ALL_COLUMNS) + 2))
+            for l in all_labels
+        ]
 
         # % section (fixed at PCT_SECTION_ROW = 38)
         pct_hdr = ["Date"] + [_display(k) for k in ALL_COLUMNS] + ["Excluded %", "No Coupon %"]
-        pct_data_rows = [_build_pct_row(d, aggregated[d]) for d in sorted_dates]
 
         # Step 2: write values (merges are now gone so all cells are writable)
         top_block = [header_row] + data_rows
         ws.update(f"A{HEADER_ROW}", top_block, value_input_option="USER_ENTERED")
 
-        pct_block = [["COUPON USAGE %"], pct_hdr] + pct_data_rows
+        pct_block = [["COUPON USAGE %"], pct_hdr] + pct_data_rows_merged
         ws.update(f"A{PCT_SECTION_ROW}", pct_block, value_input_option="USER_ENTERED")
 
         print("  Values written. Applying formatting...")
@@ -825,8 +855,8 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             requests.append(_set_col_width(sheet_id, c, 80))
             requests.append(_set_col_width(sheet_id, c + 1, 95))
 
-        # Top-table data rows
-        for i, date_str in enumerate(sorted_dates):
+        # Top-table data rows (all_labels includes preserved + fresh, sorted)
+        for i in range(len(all_labels)):
             row_0 = DATA_START - 1 + i
             requests.extend(_format_data_row(sheet_id, row_0, i, total_data_cols, n_cols))
 
@@ -844,12 +874,13 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         requests.append(_set_row_height(sheet_id, pct_hdr_0, 36))
 
         # % data rows
-        for i in range(len(sorted_dates)):
+        for i in range(len(all_labels)):
             row_0 = PCT_DATA_START - 1 + i
             requests.extend(_format_pct_row(sheet_id, row_0, i))
 
         _batch_update(sh, requests)
-        print(f"  Full write: {len(sorted_dates)} day(s), % section fixed at row {PCT_SECTION_ROW}.")
+        print(f"  Full write: {len(all_labels)} day(s) ({len(fresh_top)} new + {len(preserved_top)} preserved), "
+              f"% section fixed at row {PCT_SECTION_ROW}.")
 
     else:
         # ── Merge-sort-rewrite: read existing rows, merge with new, sort, rewrite ──
