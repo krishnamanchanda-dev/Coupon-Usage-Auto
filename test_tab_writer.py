@@ -321,10 +321,13 @@ def _parse_cell_date(cell_val) -> "datetime.date | None":
 # Mapping: our coupon key → (count_col, amount_col) in Overall tab, 1-indexed.
 # amount_col=None means the column is a single-column bucket aggregate (count only).
 OVERALL_COUPON_COLS: dict[str, tuple] = {
+    # Summary counts before named buckets — count only
+    '__excluded__':  (92,  None),  # CN  "Excluded"
+    '__no_coupon__': (93,  None),  # CO  "No Coupon"
     # Bucket aggregates — count only
-    'others':       (94,  None),  # CP  "Other"
-    'influencer':   (95,  None),  # CQ  "Influencer/MKTNG"
-    'pp':           (126, None),  # DV  "PP"
+    'others':        (94,  None),  # CP  "Other"
+    'influencer':    (95,  None),  # CQ  "Influencer/MKTNG"
+    'pp':            (126, None),  # DV  "PP"
     # Named coupons — (count, amount) pairs
     '5pcs':         (96,  97),    # CR  "5Pcs - 1999"
     '3pcs':         (98,  99),    # CT  "3Pcs - 899"
@@ -383,18 +386,25 @@ def update_overall_coupon_cols(sh, aggregated: dict) -> None:
             print(f"  WARNING: {date_str} not found in Overall tab — skipping coupon cols.")
             continue
         buckets = day["buckets"]
+        no_coupon = max(0, day["total_orders"] - day["total_coupon_used"] - day["excluded_count"])
         for key, (count_col, amount_col) in OVERALL_COUPON_COLS.items():
-            b = buckets.get(key, {"count": 0, "disc_amt": 0.0})
+            if key == "__excluded__":
+                count = day["excluded_count"]
+            elif key == "__no_coupon__":
+                count = no_coupon
+            else:
+                b = buckets.get(key, {"count": 0, "disc_amt": 0.0})
+                count = b["count"]
+                if amount_col is not None:
+                    amt = round(b["disc_amt"] * 0.25, 0)
+                    amt_cell = gspread.utils.rowcol_to_a1(row_num, amount_col)
+                    updates.append({"range": amt_cell, "values": [[amt]]})
             count_cell = gspread.utils.rowcol_to_a1(row_num, count_col)
-            updates.append({"range": count_cell, "values": [[b["count"]]]})
-            if amount_col is not None:
-                amt = round(b["disc_amt"] * 0.25, 0)
-                amt_cell = gspread.utils.rowcol_to_a1(row_num, amount_col)
-                updates.append({"range": amt_cell, "values": [[amt]]})
+            updates.append({"range": count_cell, "values": [[count]]})
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
-        print(f"  Updated coupon cols (CP–FH) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
+        print(f"  Updated coupon cols (CN–FH) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
     else:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for coupon cols.")
 
