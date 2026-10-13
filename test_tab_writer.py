@@ -505,8 +505,52 @@ def aggregate_for_tab(flat_rows: list, total_orders_by_day: dict) -> dict:
     return result
 
 
+def _read_coupon_usage_row(sh, date_str: str) -> "dict | None":
+    """
+    Read a single date's data row from the Coupon Usage tab.
+    Returns normalised dict with disc values already 0.25×, or None if not found.
+    """
+    try:
+        ws = sh.worksheet(TEST_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        return None
+
+    target_label = _day_label(date_str)
+    col_a = ws.col_values(1)
+    row_num = next((i + 1 for i, v in enumerate(col_a) if str(v).strip() == target_label), None)
+    if row_num is None:
+        return None
+
+    row = ws.row_values(row_num)
+
+    def _n(idx):
+        try:
+            return float(str(row[idx]).replace(",", "").strip()) if len(row) > idx else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
+    buckets = {}
+    for i, col_key in enumerate(ALL_COLUMNS):
+        c_idx = COUPON_START_COL + i * 2
+        a_idx = c_idx + 1
+        # disc_amt column in the sheet already stores the 0.25× value
+        buckets[col_key] = {"count": int(_n(c_idx)), "disc": _n(a_idx)}
+
+    return {
+        "total_coupon_used": int(_n(TOTAL_COL)),
+        "total_orders":      int(_n(TOTAL_ORDERS_COL)),
+        "excluded_count":    int(_n(EXCLUDED_COL)),
+        "no_coupon":         int(_n(NO_COUPON_COL)),
+        "buckets":           buckets,
+    }
+
+
 def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     """Write a flat, n8n-readable tab with yesterday's coupon data for email pickup.
+
+    Summary numbers (total_orders, coupons_used, excluded, per-coupon counts/disc)
+    are read from the Coupon Usage tab so they match exactly what is shown there.
+    Individual bucket/excluded code breakdowns still come from flat_rows.
 
     Row types:
       meta          — key/value pairs (date, totals)
@@ -517,52 +561,76 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     col4 (disc_amt) is only populated for groups PP, OTHERS, EXCLUDED and for
     specific named coupons; all others get "" so the emailer renders "—".
     """
-    # Named coupons that show disc_amt in the email
     SHOW_DISC_NAMED = {
         "FREELIPSTICK", "MODERN20", "FREEMAKEUPVANITY",
         "FREEVANITY", "LUXEVANITY", "FREEPERFUME",
     }
-    # Bucket keys whose header + detail rows show disc_amt
     SHOW_DISC_BUCKETS = {"pp", "others", "excluded"}
 
     try:
         ws = sh.worksheet(EMAIL_DATA_TAB)
         ws.clear()
+        # clear() removes values but not cell formats; reset number format so
+        # integer values don't render as "202800.00%" in percentage-formatted cells
+        sh.batch_update({"requests": [{
+            "repeatCell": {
+                "range": {
+                    "sheetId": ws.id,
+                    "startRowIndex": 0, "endRowIndex": 500,
+                    "startColumnIndex": 0, "endColumnIndex": 10,
+                },
+                "cell": {"userEnteredFormat": {}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        }]})
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=EMAIL_DATA_TAB, rows=500, cols=5)
 
     date_str = sorted(aggregated.keys())[-1]
-    day = aggregated[date_str]
-    buckets = day["buckets"]
-    total_coupon = day["total_coupon_used"]
-    total_orders = day["total_orders"]
-    excluded_count = day["excluded_count"]
+
+    # ── Source of truth: Coupon Usage tab ────────────────────────────────────
+    tab = _read_coupon_usage_row(sh, date_str)
+    if tab:
+        total_coupon  = tab["total_coupon_used"]
+        total_orders  = tab["total_orders"]
+        excluded_count = tab["excluded_count"]
+        # buckets[k]["count"] and buckets[k]["disc"] (already 0.25×) from the tab
+        buckets = tab["buckets"]
+        print(f"  Email_Data: using Coupon Usage tab values for {_day_label(date_str)}.")
+    else:
+        # Fallback to aggregated if tab row not found
+        day = aggregated[date_str]
+        total_coupon   = day["total_coupon_used"]
+        total_orders   = day["total_orders"]
+        excluded_count = day["excluded_count"]
+        buckets = {k: {"count": day["buckets"][k]["count"],
+                       "disc":  round(day["buckets"][k]["disc_amt"] * 0.25, 0)}
+                   for k in ALL_COLUMNS}
+        print(f"  Email_Data: Coupon Usage tab row not found, falling back to aggregated.")
+
     overall_pct = f"{total_coupon / total_orders * 100:.1f}" if total_orders else "0.0"
 
-    # Largest-remainder percentages (over total_coupon, for named/bucket rows)
+    # Largest-remainder percentages over total_coupon for named/bucket rows
     if total_coupon:
-        exact = {k: buckets[k]["count"] / total_coupon * 1000 for k in ALL_COLUMNS}
+        exact   = {k: buckets[k]["count"] / total_coupon * 1000 for k in ALL_COLUMNS}
         floored = {k: int(v) for k, v in exact.items()}
-        remainder = {k: exact[k] - floored[k] for k in exact}
-        extra = 1000 - sum(floored.values())
-        for k in sorted(remainder, key=lambda k: remainder[k], reverse=True)[:extra]:
+        rem     = {k: exact[k] - floored[k] for k in exact}
+        extra   = 1000 - sum(floored.values())
+        for k in sorted(rem, key=lambda k: rem[k], reverse=True)[:extra]:
             floored[k] += 1
         pcts = {k: f"{floored[k] / 10:.1f}%" for k in ALL_COLUMNS}
     else:
         pcts = {k: "0.0%" for k in ALL_COLUMNS}
 
-    # Excluded % uses total_orders as denominator (consistent with Coupon Usage sheet)
     excl_pct = f"{excluded_count / total_orders * 100:.1f}%" if total_orders else "0.0%"
 
     NAMED_DISPLAY = {k: NAMED_COUPONS[k] for k in NAMED_ORDER}
-    BUCKET_LABEL = {
-        "pp": "PP",
-        "influencer": "INFLUENCER / MKTNG",
-        "others": "OTHERS",
-        "excluded": "EXCLUDED",
+    BUCKET_LABEL  = {
+        "pp": "PP", "influencer": "INFLUENCER / MKTNG",
+        "others": "OTHERS", "excluded": "EXCLUDED",
     }
 
-    # Individual coupons within each bucket + excluded (from flat_rows)
+    # Individual codes within each bucket + excluded (from flat_rows — not in tab)
     bucket_details: dict = {k: [] for k in list(BUCKET_KEYS) + ["excluded"]}
     excluded_total_disc = 0.0
     if flat_rows:
@@ -572,10 +640,9 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
             cat = categorize(r["coupon_code"])
             disc_val = round(r["total_discount_amount"] * 0.25, 0)
             if cat in BUCKET_KEYS:
-                show_disc = cat in SHOW_DISC_BUCKETS
                 bucket_details[cat].append([
                     "bucket_detail", r["coupon_code"], r["times_used"], "",
-                    disc_val if show_disc else "",
+                    disc_val if cat in SHOW_DISC_BUCKETS else "",
                 ])
             elif cat == "excluded":
                 excluded_total_disc += r["total_discount_amount"]
@@ -585,13 +652,13 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
         for k in list(BUCKET_KEYS) + ["excluded"]:
             bucket_details[k].sort(key=lambda x: x[2], reverse=True)
 
-    # Named coupon rows — disc_amt only for coupons in SHOW_DISC_NAMED
+    # Named coupon rows — use counts from tab; disc only for allowed coupons
     named_rows = []
     for k in NAMED_ORDER:
         if buckets[k]["count"] == 0:
             continue
         display = NAMED_DISPLAY[k]
-        disc = round(buckets[k]["disc_amt"] * 0.25, 0) if display in SHOW_DISC_NAMED else ""
+        disc = buckets[k]["disc"] if display in SHOW_DISC_NAMED else ""
         named_rows.append(["named", display, buckets[k]["count"], pcts[k], disc])
     named_rows.sort(key=lambda r: r[2], reverse=True)
 
@@ -604,16 +671,13 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     ]
     all_rows.extend(named_rows)
 
-    # Named buckets (pp, influencer, others)
     for k in BUCKET_KEYS:
         if buckets[k]["count"] == 0:
             continue
-        show_disc = k in SHOW_DISC_BUCKETS
-        disc = round(buckets[k]["disc_amt"] * 0.25, 0) if show_disc else ""
+        disc = buckets[k]["disc"] if k in SHOW_DISC_BUCKETS else ""
         all_rows.append(["bucket_header", BUCKET_LABEL[k], buckets[k]["count"], pcts[k], disc])
         all_rows.extend(bucket_details.get(k, []))
 
-    # Excluded section
     if excluded_count > 0:
         excl_disc = round(excluded_total_disc * 0.25, 0)
         all_rows.append(["bucket_header", BUCKET_LABEL["excluded"], excluded_count, excl_pct, excl_disc])
