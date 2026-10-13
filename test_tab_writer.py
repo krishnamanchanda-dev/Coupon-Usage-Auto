@@ -320,57 +320,90 @@ def _parse_cell_date(cell_val) -> "datetime.date | None":
 
 # Mapping: our coupon key → (count_col, amount_col) in Overall tab, 1-indexed.
 # amount_col=None means the column is a single-column bucket aggregate (count only).
+# Column numbers below reflect the layout AFTER 2 columns are inserted before the old CP.
+# Old CP (Others=94) shifts to CR (96); old CQ (Influencer=95) shifts to CS (97); etc.
+# New CP (94) = Excluded count, new CQ (95) = No Coupon count.
 OVERALL_COUPON_COLS: dict[str, tuple] = {
-    # Summary counts before named buckets — count only
-    '__excluded__':  (92,  None),  # CN  "Excluded"
-    '__no_coupon__': (93,  None),  # CO  "No Coupon"
-    # Bucket aggregates — count only
-    'others':        (94,  None),  # CP  "Other"
-    'influencer':    (95,  None),  # CQ  "Influencer/MKTNG"
-    'pp':            (126, None),  # DV  "PP"
-    # Named coupons — (count, amount) pairs
-    '5pcs':         (96,  97),    # CR  "5Pcs - 1999"
-    '3pcs':         (98,  99),    # CT  "3Pcs - 899"
-    'b3p2':         (100, 101),   # CV  "B3P2"
-    'buy3at699':    (102, 103),   # CX  "Buy 3 at 699"
-    'freevanity':   (104, 105),   # CZ  "Vanity/FREEVANITY"
-    'luxevanity':   (106, 107),   # DB  "LUXEVANITY"
-    'freelipstick': (108, 109),   # DD  "FreeLipstick"
-    'lips5':        (110, 111),   # DF  "LIPS5"
-    'freekit':      (112, 113),   # DH  "FREEKIT"
-    'lipluxe':      (114, 115),   # DJ  "LIPLUXE"
-    'modern20':     (116, 117),   # DL  "MODERN20"
-    'b2g2':         (118, 119),   # DN  "B2G2"
-    'buy6':         (120, 121),   # DP  "BUY6"
-    'buy10':        (122, 123),   # DR  "BUY10"
-    'get4':         (124, 125),   # DT  "GET4"
-    'free6':        (127, 128),   # DW  "FREE6"
-    'free5':        (129, 130),   # DY  "FREE5"
-    'special4':     (131, 132),   # EA  "Special4"
-    'special5':     (133, 134),   # EC  "Special5"
-    'special6':     (135, 136),   # EE  "Special6"
-    'buy5':         (137, 138),   # EG  "Buy5"
-    'gpay':         (139, 140),   # EI  "Gpay"
-    'buy4':         (141, 142),   # EK  "Buy4"
-    'save25':       (143, 144),   # EM  "SAVE25"
-    'save30':       (145, 146),   # EO  "SAVE30"
-    'save35':       (147, 148),   # EQ  "SAVE35"
-    'stealdeal':    (149, 150),   # ES  "STEALDEAL"
-    'fullcb':       (151, 152),   # EU  "FULLCB"
-    'luxe3':        (155, 156),   # EY  "LUXE3"
-    'buy3':         (159, 160),   # FC  "BUY3"
-    'get2':         (161, 162),   # FE  "Get2"
-    '6pcskit':      (163, 164),   # FG  "6 Pcs Kit"
+    # New summary columns inserted before Others
+    '__excluded__':  (94,  None),  # CP  "Excluded"
+    '__no_coupon__': (95,  None),  # CQ  "No Coupon"
+    # Bucket aggregates — count only (all shifted +2)
+    'others':        (96,  None),  # CR  "Other"
+    'influencer':    (97,  None),  # CS  "Influencer/MKTNG"
+    'pp':            (128, None),  # DX  "PP"
+    # Named coupons — (count, amount) pairs (all shifted +2)
+    '5pcs':         (98,  99),    # CT  "5Pcs - 1999"
+    '3pcs':         (100, 101),   # CV  "3Pcs - 899"
+    'b3p2':         (102, 103),   # CX  "B3P2"
+    'buy3at699':    (104, 105),   # CZ  "Buy 3 at 699"
+    'freevanity':   (106, 107),   # DB  "Vanity/FREEVANITY"
+    'luxevanity':   (108, 109),   # DD  "LUXEVANITY"
+    'freelipstick': (110, 111),   # DF  "FreeLipstick"
+    'lips5':        (112, 113),   # DH  "LIPS5"
+    'freekit':      (114, 115),   # DJ  "FREEKIT"
+    'lipluxe':      (116, 117),   # DL  "LIPLUXE"
+    'modern20':     (118, 119),   # DN  "MODERN20"
+    'b2g2':         (120, 121),   # DP  "B2G2"
+    'buy6':         (122, 123),   # DR  "BUY6"
+    'buy10':        (124, 125),   # DT  "BUY10"
+    'get4':         (126, 127),   # DV  "GET4"
+    'free6':        (129, 130),   # DY  "FREE6"
+    'free5':        (131, 132),   # EA  "FREE5"
+    'special4':     (133, 134),   # EC  "Special4"
+    'special5':     (135, 136),   # EE  "Special5"
+    'special6':     (137, 138),   # EG  "Special6"
+    'buy5':         (139, 140),   # EI  "Buy5"
+    'gpay':         (141, 142),   # EK  "Gpay"
+    'buy4':         (143, 144),   # EM  "Buy4"
+    'save25':       (145, 146),   # EO  "SAVE25"
+    'save30':       (147, 148),   # EQ  "SAVE30"
+    'save35':       (149, 150),   # ES  "SAVE35"
+    'stealdeal':    (151, 152),   # EU  "STEALDEAL"
+    'fullcb':       (153, 154),   # EW  "FULLCB"
+    'luxe3':        (157, 158),   # EZ  "LUXE3"
+    'buy3':         (161, 162),   # FE  "BUY3"
+    'get2':         (163, 164),   # FG  "Get2"
+    '6pcskit':      (165, 166),   # FI  "6 Pcs Kit"
 }
 
 
+def _ensure_overall_excluded_cols(ws, sh) -> None:
+    """
+    One-time migration: insert 2 columns before the old CP (Others) column so that
+    CP = Excluded count and CQ = No Coupon count, with Others shifting to CR.
+    Idempotent — skips if CP header is already 'Excluded'.
+    """
+    cp_header = str(ws.cell(1, 94).value or "").strip().lower()
+    if cp_header == "excluded":
+        return  # already done
+
+    sheet_id = ws.id
+    # Insert 2 blank columns at 0-indexed position 93 (before 1-indexed col 94 = CP)
+    sh.batch_update({"requests": [{
+        "insertDimension": {
+            "range": {
+                "sheetId": sheet_id,
+                "dimension": "COLUMNS",
+                "startIndex": 93,
+                "endIndex": 95,
+            },
+            "inheritFromBefore": False,
+        }
+    }]})
+    # Write column headers for the two new columns
+    ws.update("CP1", [["Excluded", "No Coupon"]], value_input_option="RAW")
+    print("  One-time migration: inserted Excluded (CP) and No Coupon (CQ) before Others.")
+
+
 def update_overall_coupon_cols(sh, aggregated: dict) -> None:
-    """Write per-coupon count and 0.25× disc_amt into Overall tab columns CP–FH."""
+    """Write per-coupon count and 0.25× disc_amt into Overall tab columns CP–FI."""
     try:
         ws = sh.worksheet(OVERALL_TAB_NAME)
     except gspread.exceptions.WorksheetNotFound:
         print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping coupon col update.")
         return
+
+    _ensure_overall_excluded_cols(ws, sh)
 
     col_a = ws.col_values(1)
     date_to_row: dict[str, int] = {}
@@ -404,7 +437,7 @@ def update_overall_coupon_cols(sh, aggregated: dict) -> None:
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
-        print(f"  Updated coupon cols (CN–FH) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
+        print(f"  Updated coupon cols (CP–FI) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
     else:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for coupon cols.")
 
