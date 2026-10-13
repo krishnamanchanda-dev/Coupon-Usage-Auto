@@ -282,6 +282,18 @@ def _parse_cell_date(cell_val) -> "datetime.date | None":
             return datetime.datetime.strptime(s, fmt).date()
         except ValueError:
             pass
+    # "11 Oct" / "1 Oct" — no year; infer from current IST date
+    for fmt in ["%d %b", "%d %B"]:
+        try:
+            parsed = datetime.datetime.strptime(s, fmt)
+            today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date()
+            # Try current year; if that puts the date more than 6 months in the future, use last year
+            candidate = parsed.replace(year=today.year).date()
+            if (candidate - today).days > 180:
+                candidate = parsed.replace(year=today.year - 1).date()
+            return candidate
+        except ValueError:
+            pass
     # Google Sheets stores dates as serial numbers (epoch = 1899-12-30)
     try:
         serial = float(s)
