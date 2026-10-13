@@ -304,6 +304,87 @@ def _parse_cell_date(cell_val) -> "datetime.date | None":
     return None
 
 
+# Mapping: our coupon key → (count_col, amount_col) in Overall tab, 1-indexed.
+# amount_col=None means the column is a single-column bucket aggregate (count only).
+OVERALL_COUPON_COLS: dict[str, tuple] = {
+    # Bucket aggregates — count only
+    'others':       (94,  None),  # CP  "Other"
+    'influencer':   (95,  None),  # CQ  "Influencer/MKTNG"
+    'pp':           (126, None),  # DV  "PP"
+    # Named coupons — (count, amount) pairs
+    '5pcs':         (96,  97),    # CR  "5Pcs - 1999"
+    '3pcs':         (98,  99),    # CT  "3Pcs - 899"
+    'b3p2':         (100, 101),   # CV  "B3P2"
+    'buy3at699':    (102, 103),   # CX  "Buy 3 at 699"
+    'freevanity':   (104, 105),   # CZ  "Vanity/FREEVANITY"
+    'luxevanity':   (106, 107),   # DB  "LUXEVANITY"
+    'freelipstick': (108, 109),   # DD  "FreeLipstick"
+    'lips5':        (110, 111),   # DF  "LIPS5"
+    'freekit':      (112, 113),   # DH  "FREEKIT"
+    'lipluxe':      (114, 115),   # DJ  "LIPLUXE"
+    'modern20':     (116, 117),   # DL  "MODERN20"
+    'b2g2':         (118, 119),   # DN  "B2G2"
+    'buy6':         (120, 121),   # DP  "BUY6"
+    'buy10':        (122, 123),   # DR  "BUY10"
+    'get4':         (124, 125),   # DT  "GET4"
+    'free6':        (127, 128),   # DW  "FREE6"
+    'free5':        (129, 130),   # DY  "FREE5"
+    'special4':     (131, 132),   # EA  "Special4"
+    'special5':     (133, 134),   # EC  "Special5"
+    'special6':     (135, 136),   # EE  "Special6"
+    'buy5':         (137, 138),   # EG  "Buy5"
+    'gpay':         (139, 140),   # EI  "Gpay"
+    'buy4':         (141, 142),   # EK  "Buy4"
+    'save25':       (143, 144),   # EM  "SAVE25"
+    'save30':       (145, 146),   # EO  "SAVE30"
+    'save35':       (147, 148),   # EQ  "SAVE35"
+    'stealdeal':    (149, 150),   # ES  "STEALDEAL"
+    'fullcb':       (151, 152),   # EU  "FULLCB"
+    'luxe3':        (155, 156),   # EY  "LUXE3"
+    'buy3':         (159, 160),   # FC  "BUY3"
+    'get2':         (161, 162),   # FE  "Get2"
+    '6pcskit':      (163, 164),   # FG  "6 Pcs Kit"
+}
+
+
+def update_overall_coupon_cols(sh, aggregated: dict) -> None:
+    """Write per-coupon count and 0.25× disc_amt into Overall tab columns CP–FH."""
+    try:
+        ws = sh.worksheet(OVERALL_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping coupon col update.")
+        return
+
+    col_a = ws.col_values(1)
+    date_to_row: dict[str, int] = {}
+    for idx, cell_val in enumerate(col_a):
+        d = _parse_cell_date(cell_val)
+        if d:
+            date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
+
+    updates = []
+    for date_str, day in aggregated.items():
+        row_num = date_to_row.get(date_str)
+        if row_num is None:
+            print(f"  WARNING: {date_str} not found in Overall tab — skipping coupon cols.")
+            continue
+        buckets = day["buckets"]
+        for key, (count_col, amount_col) in OVERALL_COUPON_COLS.items():
+            b = buckets.get(key, {"count": 0, "disc_amt": 0.0})
+            count_cell = gspread.utils.rowcol_to_a1(row_num, count_col)
+            updates.append({"range": count_cell, "values": [[b["count"]]]})
+            if amount_col is not None:
+                amt = round(b["disc_amt"] * 0.25, 0)
+                amt_cell = gspread.utils.rowcol_to_a1(row_num, amount_col)
+                updates.append({"range": amt_cell, "values": [[amt]]})
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print(f"  Updated coupon cols (CP–FH) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
+    else:
+        print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for coupon cols.")
+
+
 def update_overall_tab(sh, aggregated: dict) -> None:
     """Write coupons_used / total_orders ratio to column AW of Overall tab per date."""
     try:
@@ -559,6 +640,7 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     if not new_dates and not is_first_run:
         print("  All dates already present — nothing to append.")
         update_overall_tab(sh, aggregated)
+        update_overall_coupon_cols(sh, aggregated)
         write_email_data_tab(sh, aggregated, flat_rows)
         return
 
@@ -712,6 +794,9 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
 
     print(f"\n[5/5] Updating Overall tab column AW...")
     update_overall_tab(sh, aggregated)
+
+    print(f"\n[5b] Updating Overall tab coupon columns (CP–FH)...")
+    update_overall_coupon_cols(sh, aggregated)
 
     print(f"\n[6/6] Writing Email_Data tab for n8n pickup...")
     write_email_data_tab(sh, aggregated, flat_rows)
