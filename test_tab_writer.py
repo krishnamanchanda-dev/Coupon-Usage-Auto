@@ -30,6 +30,11 @@ CYAN_ROWS        = 2   # decorative rows at top
 HEADER_ROW       = 3   # coupon name row (1-indexed)
 DATA_START       = 4   # first data row
 PCT_GAP          = 3   # blank rows between data table and % section
+MAX_DATA_ROWS    = 31  # max top-table data rows (enough for a full month)
+# % section fixed at row 38: DATA_START(4) + MAX_DATA_ROWS(31) + PCT_GAP(3) = 38
+PCT_SECTION_ROW  = DATA_START + MAX_DATA_ROWS + PCT_GAP   # "COUPON USAGE %" label (1-indexed)
+PCT_HEADER_ROW   = PCT_SECTION_ROW + 1                    # "Date | SAVE30 | …" header
+PCT_DATA_START   = PCT_SECTION_ROW + 2                    # first % data row
 DATE_COL         = 0   # column A (0-indexed)
 TOTAL_COL        = 1   # column B: "Coupons Used" (0-indexed)
 COUPON_START_COL = 2   # column C onwards: coupon pairs (0-indexed)
@@ -80,14 +85,58 @@ def _col_for(coupon_idx: int) -> int:
 
 
 def _get_or_create_tab(sh):
+    """Return (worksheet, is_new). Never clears an existing tab."""
     try:
         ws = sh.worksheet(TEST_TAB_NAME)
-        ws.clear()
-        print(f"  Cleared existing '{TEST_TAB_NAME}' tab.")
+        print(f"  Using existing '{TEST_TAB_NAME}' tab.")
+        return ws, False
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=TEST_TAB_NAME, rows=500, cols=100)
         print(f"  Created new '{TEST_TAB_NAME}' tab.")
-    return ws
+        return ws, True
+
+
+def _find_tab_state(ws) -> dict:
+    """
+    Read column A to find what date labels already exist in both tables.
+    Returns:
+      top_date_labels  — list of existing labels (e.g. "12 Oct") in the top table
+      pct_date_labels  — list of existing labels in the % section
+      is_first_run     — True if the % section has never been written
+    """
+    col_a = ws.col_values(1)  # 1-indexed; list of raw strings
+
+    top_date_labels = []
+    pct_date_labels = []
+
+    for i, val in enumerate(col_a):
+        row_1 = i + 1
+        sv = str(val).strip()
+        if not sv:
+            continue
+
+        if row_1 == PCT_SECTION_ROW:
+            continue  # "COUPON USAGE %" label row
+        if row_1 == PCT_HEADER_ROW:
+            continue  # "Date" header row
+
+        if DATA_START <= row_1 < PCT_SECTION_ROW:
+            if sv not in ("Coupons Used", ""):
+                top_date_labels.append(sv)
+        elif row_1 >= PCT_DATA_START:
+            pct_date_labels.append(sv)
+
+    # Check whether the % section has been written at all
+    pct_cell = ""
+    if len(col_a) >= PCT_SECTION_ROW:
+        pct_cell = str(col_a[PCT_SECTION_ROW - 1]).strip()
+    is_first_run = "COUPON USAGE" not in pct_cell.upper()
+
+    return {
+        "top_date_labels": top_date_labels,
+        "pct_date_labels": pct_date_labels,
+        "is_first_run": is_first_run,
+    }
 
 
 def _batch_update(sh, requests: list):
@@ -390,193 +439,218 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     print(f"  Email_Data tab: {len(named_rows)} named + {detail_count} bucket-detail rows for {date_str}.")
 
 
+def _build_pct_row(date_str: str, day: dict) -> list:
+    total = day["total_coupon_used"]
+    row = [_day_label(date_str)]
+    if total:
+        exact = {k: day["buckets"][k]["count"] / total * 1000 for k in ALL_COLUMNS}
+        floored = {k: int(v) for k, v in exact.items()}
+        remainder = {k: exact[k] - floored[k] for k in exact}
+        extra = 1000 - sum(floored.values())
+        for k in sorted(remainder, key=lambda k: remainder[k], reverse=True)[:extra]:
+            floored[k] += 1
+        for col_key in ALL_COLUMNS:
+            row.append(f"{floored[col_key] / 10:.1f}%")
+    else:
+        row.extend(["0.0%"] * len(ALL_COLUMNS))
+    return row
+
+
+def _format_data_row(sheet_id, row_0: int, row_idx: int, total_data_cols: int, n_cols: int) -> list:
+    """Return formatting requests for one data row in the top table."""
+    NUM_FMT = {"type": "NUMBER", "pattern": "#,##0"}
+    bg = WHITE if row_idx % 2 == 0 else LIGHT_GREY
+    reqs = []
+    reqs.append(_range_format(sheet_id, row_0, row_0 + 1, 0, 1,
+                               bg=bg, bold=False, font_size=10, h_align="LEFT"))
+    reqs.append(_range_format(sheet_id, row_0, row_0 + 1, TOTAL_COL, total_data_cols,
+                               bg=bg, bold=False, font_size=10, h_align="RIGHT", number_fmt=NUM_FMT))
+    reqs.append(_border_request(sheet_id, row_0, row_0 + 1, 0, total_data_cols, BORDER))
+    reqs.append(_set_row_height(sheet_id, row_0, 22))
+    for j in range(n_cols):
+        left_0 = COUPON_START_COL + j * 2
+        reqs.append({
+            "updateBorders": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_0,
+                    "endRowIndex": row_0 + 1,
+                    "startColumnIndex": left_0,
+                    "endColumnIndex": left_0 + 2,
+                },
+                "left":  {"style": "SOLID", "color": {"red": 0.4, "green": 0.4, "blue": 0.4}},
+                "right": {"style": "SOLID", "color": {"red": 0.4, "green": 0.4, "blue": 0.4}},
+            }
+        })
+    return reqs
+
+
+def _format_pct_row(sheet_id, row_0: int, row_idx: int) -> list:
+    """Return formatting requests for one data row in the % section."""
+    bg = WHITE if row_idx % 2 == 0 else LIGHT_GREY
+    reqs = []
+    reqs.append(_range_format(sheet_id, row_0, row_0 + 1, 0, len(ALL_COLUMNS) + 1,
+                               bg=bg, font_size=10, h_align="CENTER"))
+    reqs.append(_border_request(sheet_id, row_0, row_0 + 1, 0, len(ALL_COLUMNS) + 1, BORDER))
+    reqs.append(_set_row_height(sheet_id, row_0, 22))
+    return reqs
+
+
 def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     gc = _get_client()
     sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = _get_or_create_tab(sh)
+    ws, is_new = _get_or_create_tab(sh)
     sheet_id = ws.id
 
     aggregated = aggregate_for_tab(flat_rows, total_orders_by_day)
     sorted_dates = sorted(aggregated.keys())
     n_cols = len(ALL_COLUMNS)
-    total_data_cols = COUPON_START_COL + n_cols * 2  # A + B + (count+amount) × 37
+    total_data_cols = COUPON_START_COL + n_cols * 2
 
-    # ── 1. Write cell values (all in one batch) ───────────────────────────────
-    # Coupon header row
-    header_row = ["", "Coupons Used"]
-    for col_key in ALL_COLUMNS:
-        header_row.append(_display(col_key))
-        header_row.append("")  # merged away
+    state = _find_tab_state(ws)
+    is_first_run = is_new or state["is_first_run"]
 
-    # Data rows
-    data_rows = []
-    for date_str in sorted_dates:
-        day = aggregated[date_str]
-        row = [_day_label(date_str), day["total_coupon_used"]]
+    existing_top = set(state["top_date_labels"])
+    new_dates = [d for d in sorted_dates if _day_label(d) not in existing_top]
+
+    if not new_dates and not is_first_run:
+        print("  All dates already present — nothing to append.")
+        update_overall_tab(sh, aggregated)
+        write_email_data_tab(sh, aggregated, flat_rows)
+        return
+
+    if is_first_run:
+        # ── Full write (first time) ───────────────────────────────────────────
+        ws.clear()
+
+        # Coupon header row
+        header_row = ["", "Coupons Used"]
         for col_key in ALL_COLUMNS:
-            b = day["buckets"][col_key]
-            row.append(b["count"] if b["count"] > 0 else 0)
-            row.append(round(b["disc_amt"] * 0.25, 0) if b["disc_amt"] > 0 else 0)
-        data_rows.append(row)
+            header_row.append(_display(col_key))
+            header_row.append("")
 
-    # % section
-    pct_label_row = DATA_START + len(sorted_dates) + PCT_GAP
-    pct_header_row = pct_label_row + 1
-    pct_data_start = pct_header_row + 1
-
-    pct_hdr = ["Date"] + [_display(k) for k in ALL_COLUMNS]
-
-    pct_data_rows = []
-    for date_str in sorted_dates:
-        day = aggregated[date_str]
-        total = day["total_coupon_used"]
-        row = [_day_label(date_str)]
-        if total:
-            exact = {k: day["buckets"][k]["count"] / total * 1000 for k in ALL_COLUMNS}
-            floored = {k: int(v) for k, v in exact.items()}
-            remainder = {k: exact[k] - floored[k] for k in exact}
-            extra = 1000 - sum(floored.values())
-            for k in sorted(remainder, key=lambda k: remainder[k], reverse=True)[:extra]:
-                floored[k] += 1
+        # Top-table data rows
+        data_rows = []
+        for date_str in sorted_dates:
+            day = aggregated[date_str]
+            row = [_day_label(date_str), day["total_coupon_used"]]
             for col_key in ALL_COLUMNS:
-                row.append(f"{floored[col_key] / 10:.1f}%")
-        else:
-            for col_key in ALL_COLUMNS:
-                row.append("0.0%")
-        pct_data_rows.append(row)
+                b = day["buckets"][col_key]
+                row.append(b["count"] if b["count"] > 0 else 0)
+                row.append(round(b["disc_amt"] * 0.25, 0) if b["disc_amt"] > 0 else 0)
+            data_rows.append(row)
 
-    # Build full block and write in one call
-    blank_rows = [[] for _ in range(PCT_GAP)]
-    all_rows = (
-        [header_row]
-        + data_rows
-        + blank_rows
-        + [["COUPON USAGE %"]]
-        + [pct_hdr]
-        + pct_data_rows
-    )
-    ws.update(f"A{HEADER_ROW}", all_rows, value_input_option="USER_ENTERED")
+        # % section (fixed at PCT_SECTION_ROW = 38)
+        pct_hdr = ["Date"] + [_display(k) for k in ALL_COLUMNS]
+        pct_data_rows = [_build_pct_row(d, aggregated[d]) for d in sorted_dates]
 
-    print("  Values written. Applying formatting...")
+        # Write header block (rows 3+)
+        blank_gap = [[] for _ in range(PCT_GAP)]
+        top_block = [header_row] + data_rows
+        ws.update(f"A{HEADER_ROW}", top_block, value_input_option="USER_ENTERED")
 
-    # ── 2. Batch format & style requests ─────────────────────────────────────
-    requests = []
+        # Write % section at fixed row
+        pct_block = [["COUPON USAGE %"], pct_hdr] + pct_data_rows
+        ws.update(f"A{PCT_SECTION_ROW}", pct_block, value_input_option="USER_ENTERED")
 
-    # Unmerge all cells first (clears stale merges from previous runs)
-    requests.append({
-        "unmergeCells": {
-            "range": {
-                "sheetId": sheet_id,
-                "startRowIndex": 0, "endRowIndex": 500,
-                "startColumnIndex": 0, "endColumnIndex": 200,
-            }
-        }
-    })
+        print("  Values written. Applying formatting...")
 
-    # Cyan rows 1 & 2 (0-indexed: 0, 1)
-    requests.append(_range_format(sheet_id, 0, CYAN_ROWS, 0, total_data_cols,
-                                  bg=CYAN, bold=False))
-    requests.append(_set_row_height(sheet_id, 0, 22))
-    requests.append(_set_row_height(sheet_id, 1, 22))
+        requests = []
 
-    # Yellow header row (0-indexed: HEADER_ROW - 1 = 2)
-    header_row_0 = HEADER_ROW - 1
-    requests.append(_range_format(sheet_id, header_row_0, header_row_0 + 1, 0, total_data_cols,
-                                  bg=YELLOW, bold=True, font_size=11,
-                                  h_align="CENTER", v_align="MIDDLE"))
-    requests.append(_set_row_height(sheet_id, header_row_0, 46))
-
-    # Merge coupon name cells in header row + border each pair
-    for i, col_key in enumerate(ALL_COLUMNS):
-        left_col_0 = COUPON_START_COL + i * 2   # 0-indexed
-        right_col_0 = left_col_0 + 1
-
-        # Merge the 2 header cells
-        requests.append(_merge_request(sheet_id, header_row_0, left_col_0, right_col_0 + 1))
-
-        # Dark border around each coupon pair in header
-        requests.append(_border_request(sheet_id, header_row_0, header_row_0 + 1,
-                                        left_col_0, right_col_0 + 1, BORDER_DARK))
-
-    # Date column (col A): width + format
-    requests.append(_set_col_width(sheet_id, 0, 72))
-    # Coupons Used column (col B)
-    requests.append(_set_col_width(sheet_id, TOTAL_COL, 100))
-    # Coupon data columns: width
-    for i in range(n_cols):
-        c = COUPON_START_COL + i * 2
-        requests.append(_set_col_width(sheet_id, c, 80))      # count col
-        requests.append(_set_col_width(sheet_id, c + 1, 95))  # amount col
-
-    # Data rows: white bg, number format, borders, right-aligned numbers
-    NUM_FMT = {"type": "NUMBER", "pattern": "#,##0"}
-    last_data_row_0 = DATA_START - 1 + len(sorted_dates)
-
-    for i, date_str in enumerate(sorted_dates):
-        row_0 = DATA_START - 1 + i
-        bg = WHITE if i % 2 == 0 else LIGHT_GREY
-
-        # Date cell: left-align, plain
-        requests.append(_range_format(sheet_id, row_0, row_0 + 1, 0, 1,
-                                      bg=bg, bold=False, font_size=10, h_align="LEFT"))
-
-        # Number cells (Coupons Used + all coupon cols): right-align, comma format
-        requests.append(_range_format(sheet_id, row_0, row_0 + 1, TOTAL_COL, total_data_cols,
-                                      bg=bg, bold=False, font_size=10,
-                                      h_align="RIGHT", number_fmt=NUM_FMT))
-
-        # Border for full row
-        requests.append(_border_request(sheet_id, row_0, row_0 + 1,
-                                        0, total_data_cols, BORDER))
-
-        requests.append(_set_row_height(sheet_id, row_0, 22))
-
-    # Vertical dividers between coupon pairs in data section
-    for i in range(n_cols):
-        left_0 = COUPON_START_COL + i * 2
-        for row_0 in range(DATA_START - 1, last_data_row_0):
-            requests.append({
-                "updateBorders": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": row_0,
-                        "endRowIndex": row_0 + 1,
-                        "startColumnIndex": left_0,
-                        "endColumnIndex": left_0 + 2,
-                    },
-                    "left":  {"style": "SOLID", "color": {"red": 0.4, "green": 0.4, "blue": 0.4}},
-                    "right": {"style": "SOLID", "color": {"red": 0.4, "green": 0.4, "blue": 0.4}},
+        # Unmerge everything
+        requests.append({
+            "unmergeCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0, "endRowIndex": 500,
+                    "startColumnIndex": 0, "endColumnIndex": 200,
                 }
-            })
+            }
+        })
 
-    # % section header label
-    pct_lbl_0 = pct_label_row - 1
-    requests.append(_range_format(sheet_id, pct_lbl_0, pct_lbl_0 + 1, 0, total_data_cols,
-                                  bg=YELLOW, bold=True, font_size=11))
-    requests.append(_set_row_height(sheet_id, pct_lbl_0, 36))
+        # Cyan rows 1 & 2
+        requests.append(_range_format(sheet_id, 0, CYAN_ROWS, 0, total_data_cols, bg=CYAN))
+        requests.append(_set_row_height(sheet_id, 0, 22))
+        requests.append(_set_row_height(sheet_id, 1, 22))
 
-    # % section column headers
-    pct_hdr_0 = pct_header_row - 1
-    requests.append(_range_format(sheet_id, pct_hdr_0, pct_hdr_0 + 1, 0, len(ALL_COLUMNS) + 1,
-                                  bg=CYAN, bold=True, font_size=10, h_align="CENTER"))
-    requests.append(_set_row_height(sheet_id, pct_hdr_0, 36))
+        # Yellow header row
+        hdr0 = HEADER_ROW - 1
+        requests.append(_range_format(sheet_id, hdr0, hdr0 + 1, 0, total_data_cols,
+                                       bg=YELLOW, bold=True, font_size=11,
+                                       h_align="CENTER", v_align="MIDDLE"))
+        requests.append(_set_row_height(sheet_id, hdr0, 46))
 
-    # % data rows
-    for i in range(len(sorted_dates)):
-        row_0 = pct_data_start - 1 + i
-        bg = WHITE if i % 2 == 0 else LIGHT_GREY
-        requests.append(_range_format(sheet_id, row_0, row_0 + 1, 0, len(ALL_COLUMNS) + 1,
-                                      bg=bg, font_size=10, h_align="CENTER"))
-        requests.append(_border_request(sheet_id, row_0, row_0 + 1,
-                                        0, len(ALL_COLUMNS) + 1, BORDER))
-        requests.append(_set_row_height(sheet_id, row_0, 22))
+        for i, col_key in enumerate(ALL_COLUMNS):
+            lc = COUPON_START_COL + i * 2
+            requests.append(_merge_request(sheet_id, hdr0, lc, lc + 2))
+            requests.append(_border_request(sheet_id, hdr0, hdr0 + 1, lc, lc + 2, BORDER_DARK))
 
-    # Send all formatting in one batch
-    _batch_update(sh, requests)
+        # Column widths
+        requests.append(_set_col_width(sheet_id, 0, 72))
+        requests.append(_set_col_width(sheet_id, TOTAL_COL, 100))
+        for i in range(n_cols):
+            c = COUPON_START_COL + i * 2
+            requests.append(_set_col_width(sheet_id, c, 80))
+            requests.append(_set_col_width(sheet_id, c + 1, 95))
 
-    print(f"  Formatted {len(requests)} styling rules.")
-    print(f"  {len(sorted_dates)} day(s) × {n_cols} coupon columns.")
-    print(f"  Coupon Usage % section at row {pct_label_row}.")
+        # Top-table data rows
+        for i, date_str in enumerate(sorted_dates):
+            row_0 = DATA_START - 1 + i
+            requests.extend(_format_data_row(sheet_id, row_0, i, total_data_cols, n_cols))
+
+        # % section label row
+        pct_lbl_0 = PCT_SECTION_ROW - 1
+        requests.append(_range_format(sheet_id, pct_lbl_0, pct_lbl_0 + 1, 0, total_data_cols,
+                                       bg=YELLOW, bold=True, font_size=11))
+        requests.append(_set_row_height(sheet_id, pct_lbl_0, 36))
+
+        # % section header row
+        pct_hdr_0 = PCT_HEADER_ROW - 1
+        requests.append(_range_format(sheet_id, pct_hdr_0, pct_hdr_0 + 1, 0, len(ALL_COLUMNS) + 1,
+                                       bg=CYAN, bold=True, font_size=10, h_align="CENTER"))
+        requests.append(_set_row_height(sheet_id, pct_hdr_0, 36))
+
+        # % data rows
+        for i in range(len(sorted_dates)):
+            row_0 = PCT_DATA_START - 1 + i
+            requests.extend(_format_pct_row(sheet_id, row_0, i))
+
+        _batch_update(sh, requests)
+        print(f"  Full write: {len(sorted_dates)} day(s), % section fixed at row {PCT_SECTION_ROW}.")
+
+    else:
+        # ── Append mode: only write new dates ────────────────────────────────
+        existing_count = len(state["top_date_labels"])
+
+        top_append_row = DATA_START + existing_count          # 1-indexed
+        pct_append_row = PCT_DATA_START + existing_count      # 1-indexed
+
+        top_rows = []
+        pct_rows = []
+        for date_str in new_dates:
+            day = aggregated[date_str]
+            top_row = [_day_label(date_str), day["total_coupon_used"]]
+            for col_key in ALL_COLUMNS:
+                b = day["buckets"][col_key]
+                top_row.append(b["count"] if b["count"] > 0 else 0)
+                top_row.append(round(b["disc_amt"] * 0.25, 0) if b["disc_amt"] > 0 else 0)
+            top_rows.append(top_row)
+            pct_rows.append(_build_pct_row(date_str, day))
+
+        ws.update(f"A{top_append_row}", top_rows, value_input_option="USER_ENTERED")
+        ws.update(f"A{pct_append_row}", pct_rows, value_input_option="USER_ENTERED")
+
+        requests = []
+        for i, date_str in enumerate(new_dates):
+            row_idx = existing_count + i
+            top_row_0 = top_append_row - 1 + i
+            pct_row_0 = pct_append_row - 1 + i
+            requests.extend(_format_data_row(sheet_id, top_row_0, row_idx, total_data_cols, n_cols))
+            requests.extend(_format_pct_row(sheet_id, pct_row_0, row_idx))
+
+        _batch_update(sh, requests)
+        print(f"  Appended {len(new_dates)} new date(s) to both tables "
+              f"(top row {top_append_row}, % row {pct_append_row}).")
 
     print(f"\n[5/5] Updating Overall tab column AW...")
     update_overall_tab(sh, aggregated)

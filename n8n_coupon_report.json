@@ -2,23 +2,11 @@
   "name": "Swiss Beauty - Daily Coupon Report",
   "nodes": [
     {
-      "id": "node-note",
-      "name": "Setup Instructions",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [200, 80],
-      "parameters": {
-        "content": "## Setup checklist\n\n1. **Google Sheets credential** — Credentials → New → Google Sheets OAuth2. Replace `REPLACE_WITH_GOOGLE_SHEETS_CRED_ID` in the Read Sheet node.\n\n2. **Gmail credential** — Credentials → New → Gmail OAuth2. Replace `REPLACE_WITH_GMAIL_CRED_ID` in the Send Email node.\n\n3. **Sheet ID** — Replace `REPLACE_WITH_SHEET_ID` in the Read Sheet node with your Google Sheet ID.\n\n4. **Recipient email** — Update REPORT_TO in the Set Config node.\n\n5. **Timing** — Runs at 08:10 IST (02:40 UTC), 10 min after the GitHub Actions Python script. Adjust if needed.\n\n6. **Activate** — Toggle the workflow to Active.\n\n---\nPre-requisite: Python script (GitHub Actions) must run first — it writes the `Email_Data` tab that this workflow reads.",
-        "height": 200,
-        "width": 760
-      }
-    },
-    {
       "id": "node-schedule",
       "name": "Daily 8:10 AM IST",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
-      "position": [200, 340],
+      "position": [200, 300],
       "parameters": {
         "rule": {
           "interval": [
@@ -31,38 +19,11 @@
       }
     },
     {
-      "id": "node-config",
-      "name": "Set Config",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.3,
-      "position": [440, 340],
-      "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {
-              "id": "cfg-1",
-              "name": "REPORT_TO",
-              "value": "sahil.gaur@swissbeauty.in",
-              "type": "string"
-            },
-            {
-              "id": "cfg-2",
-              "name": "SHEET_ID",
-              "value": "REPLACE_WITH_SHEET_ID",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
       "id": "node-read-sheet",
       "name": "Read Email_Data Tab",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.4,
-      "position": [680, 340],
+      "position": [440, 300],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "REPLACE_WITH_GOOGLE_SHEETS_CRED_ID",
@@ -73,7 +34,7 @@
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "={{ $('Set Config').item.json.SHEET_ID }}",
+          "value": "1RBIngrxsQR2fWoksu83OU5YGCW5Idp7DLiVnTKp04fE",
           "mode": "id"
         },
         "sheetName": {
@@ -83,7 +44,7 @@
         },
         "options": {
           "valueRenderMode": "FORMATTED_VALUE",
-          "range": "A1:D100"
+          "range": "A1:E500"
         },
         "filtersUI": {}
       }
@@ -93,10 +54,10 @@
       "name": "Build Email HTML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 340],
+      "position": [680, 300],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Rows come in as individual items from Google Sheets node\n// Row 0 (first item): meta  — date, total_orders, total_coupon, overall_pct\n// Row 1 (second item): header row — skip\n// Row 2+ (remaining): coupon data — Coupon, Count, % of Usage, Disc Amt\n\nconst items = $input.all();\nif (!items || items.length < 3) {\n  throw new Error('Email_Data tab has insufficient data — did the Python script run?');\n}\n\nconst meta = items[0].json;\nconst dateStr   = String(Object.values(meta)[0] || '');\nconst totalOrders = Number(Object.values(meta)[1] || 0);\nconst totalCoupon = Number(Object.values(meta)[2] || 0);\nconst overallPct  = String(Object.values(meta)[3] || '0.0');\n\n// Coupon rows start at index 2 (skip header at index 1)\nconst couponRows = items.slice(2).map(it => {\n  const v = Object.values(it.json);\n  return { display: String(v[0]||''), count: Number(v[1]||0), pct: String(v[2]||'0.0%'), disc: Number(v[3]||0) };\n}).filter(r => r.count > 0);\n\n// Date label\nconst MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nlet label = dateStr;\ntry {\n  const [y, mo, dy] = dateStr.split('-');\n  label = `${parseInt(dy)} ${MONTHS[parseInt(mo)-1]} ${y}`;\n} catch(e) { label = dateStr; }\n\nconst fmt = n => Math.round(n).toLocaleString('en-IN');\n\nconst rows = couponRows.map((r, i) => {\n  const isBucket = ['PP (Paid Promotion)','Influencer / Marketing','Others'].includes(r.display);\n  const bg  = i % 2 === 0 ? '#ffffff' : '#f8f9fa';\n  const fw  = isBucket ? '600' : '400';\n  return `<tr style=\"background:${bg}\">\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;font-weight:${fw}\">${r.display}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${fmt(r.count)}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${r.pct}</td>\n    <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">&#8377;${fmt(r.disc)}</td>\n  </tr>`;\n}).join('');\n\nconst generatedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/></head>\n<body style=\"margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"660\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.10)\">\n\n  <tr><td style=\"background:#1a1a2e;padding:28px 36px\">\n    <p style=\"margin:0 0 4px;color:#f5a623;font-size:11px;letter-spacing:3px;text-transform:uppercase\">Swiss Beauty Analytics</p>\n    <h1 style=\"margin:0 0 6px;color:#ffffff;font-size:24px;font-weight:700\">Daily Coupon Report</h1>\n    <p style=\"margin:0;color:#aaaacc;font-size:14px\">&#128197;&nbsp;${label}</p>\n  </td></tr>\n\n  <tr><td style=\"padding:28px 36px 16px\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n    <tr>\n      <td style=\"background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#e65100\">${fmt(totalOrders)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Total Orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#2e7d32\">${fmt(totalCoupon)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Coupons Used</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#1565c0\">${overallPct}%</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Overall Usage Rate</div>\n        <div style=\"font-size:9px;color:#aaa;margin-top:2px\">coupons / total orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#6a1b9a\">&#8377;${fmt(couponRows.reduce((s,r)=>s+r.disc,0))}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Disc Amt &#xD7;0.25</div>\n      </td>\n    </tr>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"padding:8px 36px 32px\">\n    <p style=\"margin:0 0 12px;font-size:13px;font-weight:700;color:#1a1a2e;text-transform:uppercase;letter-spacing:1px\">Coupon-wise Breakdown</p>\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"font-size:13px;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden\">\n      <thead>\n        <tr style=\"background:#1a1a2e;color:#fff\">\n          <th style=\"padding:11px 16px;text-align:left;font-weight:600;font-size:12px\">Coupon</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Count</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">% of Usage</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Disc Amt (&#xD7;0.25)</th>\n        </tr>\n      </thead>\n      <tbody>\n        ${rows}\n        <tr style=\"background:#f0f0f0;font-weight:700\">\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e\">TOTAL</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">${fmt(totalCoupon)}</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">100.0%</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">&#8377;${fmt(couponRows.reduce((s,r)=>s+r.disc,0))}</td>\n        </tr>\n      </tbody>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"background:#f8f9fa;padding:14px 36px;border-top:1px solid #eee\">\n    <p style=\"margin:0;font-size:11px;color:#aaa\">Auto-generated by Swiss Beauty Coupon Automation &middot; ${generatedAt} IST</p>\n  </td></tr>\n\n</table>\n</td></tr>\n</table>\n</body></html>`;\n\nreturn [{ json: {\n  to: $('Set Config').first().json.REPORT_TO,\n  subject: `Swiss Beauty Coupon Report \\u2014 ${label}`,\n  html\n} }];"
+        "jsCode": "const items = $input.all();\n\n// Meta\nconst meta = {};\nitems.filter(it => it.json.row_type === 'meta')\n     .forEach(it => { meta[String(it.json.col1)] = it.json.col2; });\n\nconst dateStr     = String(meta.date         || '');\nconst totalOrders = Number(meta.total_orders  || 0);\nconst totalCoupon = Number(meta.total_coupon  || 0);\nconst overallPct  = String(meta.overall_pct   || '0.0');\n\nconst MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nlet label = dateStr;\ntry { const [y,mo,dy] = dateStr.split('-'); label = `${parseInt(dy)} ${MONTHS[parseInt(mo)-1]} ${y}`; } catch(e) {}\n\nconst fmt = n => Math.round(n).toLocaleString('en-IN');\n\n// Build table rows\nlet tableRows = '';\nlet totalDisc = 0;\nlet namedAlt = 0;\n\nfor (const it of items) {\n  const rt = it.json.row_type;\n  const c1 = String(it.json.col1 || '');\n  const c2 = Number(it.json.col2 || 0);\n  const c3 = String(it.json.col3 || '');\n  const c4 = Number(it.json.col4 || 0);\n\n  if (rt === 'named') {\n    const bg = namedAlt++ % 2 === 0 ? '#ffffff' : '#f8f9fa';\n    tableRows += `<tr style=\"background:${bg}\">\n      <td style=\"padding:9px 16px;border-bottom:1px solid #eee\">${c1}</td>\n      <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${fmt(c2)}</td>\n      <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">${c3}</td>\n      <td style=\"padding:9px 16px;border-bottom:1px solid #eee;text-align:right\">&#8377;${fmt(c4)}</td>\n    </tr>`;\n    totalDisc += c4;\n\n  } else if (rt === 'bucket_header') {\n    tableRows += `<tr style=\"background:#2d3748;color:#fff\">\n      <td style=\"padding:10px 16px;font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase\">${c1}</td>\n      <td style=\"padding:10px 16px;text-align:right;font-weight:700\">${fmt(c2)}</td>\n      <td style=\"padding:10px 16px;text-align:right;font-weight:700\">${c3}</td>\n      <td style=\"padding:10px 16px;text-align:right;font-weight:700\">&#8377;${fmt(c4)}</td>\n    </tr>`;\n    totalDisc += c4;\n\n  } else if (rt === 'bucket_detail') {\n    tableRows += `<tr style=\"background:#f5f5ff\">\n      <td style=\"padding:7px 16px 7px 28px;border-bottom:1px solid #eee;color:#555;font-size:12px\">&rsaquo;&nbsp;${c1}</td>\n      <td style=\"padding:7px 16px;border-bottom:1px solid #eee;text-align:right;color:#555;font-size:12px\">${fmt(c2)}</td>\n      <td style=\"padding:7px 16px;border-bottom:1px solid #eee;text-align:right;color:#aaa;font-size:12px\">&#8212;</td>\n      <td style=\"padding:7px 16px;border-bottom:1px solid #eee;text-align:right;color:#555;font-size:12px\">&#8377;${fmt(c4)}</td>\n    </tr>`;\n  }\n}\n\nconst generatedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/></head>\n<body style=\"margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"660\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.10)\">\n\n  <tr><td style=\"background:#1a1a2e;padding:28px 36px\">\n    <p style=\"margin:0 0 4px;color:#f5a623;font-size:11px;letter-spacing:3px;text-transform:uppercase\">Swiss Beauty Analytics</p>\n    <h1 style=\"margin:0 0 6px;color:#ffffff;font-size:24px;font-weight:700\">Daily Coupon Report</h1>\n    <p style=\"margin:0;color:#aaaacc;font-size:14px\">&#128197;&nbsp;${label}</p>\n  </td></tr>\n\n  <tr><td style=\"padding:28px 36px 16px\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n      <td style=\"background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#e65100\">${fmt(totalOrders)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Total Orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#2e7d32\">${fmt(totalCoupon)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Coupons Used</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#1565c0\">${overallPct}%</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Overall Usage Rate</div>\n        <div style=\"font-size:9px;color:#aaa;margin-top:2px\">coupons / total orders</div>\n      </td>\n      <td width=\"4%\"></td>\n      <td style=\"background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:18px 12px;text-align:center;width:23%\">\n        <div style=\"font-size:28px;font-weight:700;color:#6a1b9a\">&#8377;${fmt(totalDisc)}</div>\n        <div style=\"font-size:10px;color:#888;margin-top:5px;text-transform:uppercase;letter-spacing:1px\">Disc Amt &#xD7;0.25</div>\n      </td>\n    </tr></table>\n  </td></tr>\n\n  <tr><td style=\"padding:8px 36px 32px\">\n    <p style=\"margin:0 0 12px;font-size:13px;font-weight:700;color:#1a1a2e;text-transform:uppercase;letter-spacing:1px\">Coupon-wise Breakdown</p>\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"font-size:13px;border:1px solid #e0e0e0;border-radius:6px;overflow:hidden\">\n      <thead>\n        <tr style=\"background:#1a1a2e;color:#fff\">\n          <th style=\"padding:11px 16px;text-align:left;font-weight:600;font-size:12px\">Coupon</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Count</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">% of Usage</th>\n          <th style=\"padding:11px 16px;text-align:right;font-weight:600;font-size:12px\">Disc Amt (&#xD7;0.25)</th>\n        </tr>\n      </thead>\n      <tbody>\n        ${tableRows}\n        <tr style=\"background:#f0f0f0;font-weight:700\">\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e\">TOTAL</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">${fmt(totalCoupon)}</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">100.0%</td>\n          <td style=\"padding:11px 16px;border-top:2px solid #1a1a2e;text-align:right\">&#8377;${fmt(totalDisc)}</td>\n        </tr>\n      </tbody>\n    </table>\n  </td></tr>\n\n  <tr><td style=\"background:#f8f9fa;padding:14px 36px;border-top:1px solid #eee\">\n    <p style=\"margin:0;font-size:11px;color:#aaa\">Auto-generated by Swiss Beauty Coupon Automation &middot; ${generatedAt} IST</p>\n  </td></tr>\n\n</table>\n</td></tr>\n</table>\n</body></html>`;\n\nreturn [{ json: { subject: `Swiss Beauty Coupon Report \\u2014 ${label}`, html } }];"
       }
     },
     {
@@ -104,7 +65,7 @@
       "name": "Send Daily Report",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [1160, 340],
+      "position": [920, 300],
       "credentials": {
         "gmailOAuth2": {
           "id": "REPLACE_WITH_GMAIL_CRED_ID",
@@ -113,7 +74,7 @@
       },
       "parameters": {
         "operation": "send",
-        "sendTo": "={{ $json.to }}",
+        "sendTo": "sahil.gaur@swissbeauty.in",
         "subject": "={{ $json.subject }}",
         "message": "={{ $json.html }}",
         "options": {
@@ -125,11 +86,6 @@
   ],
   "connections": {
     "Daily 8:10 AM IST": {
-      "main": [
-        [{ "node": "Set Config", "type": "main", "index": 0 }]
-      ]
-    },
-    "Set Config": {
       "main": [
         [{ "node": "Read Email_Data Tab", "type": "main", "index": 0 }]
       ]
