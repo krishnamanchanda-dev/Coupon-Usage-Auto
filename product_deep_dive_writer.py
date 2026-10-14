@@ -11,7 +11,7 @@ Column H: G/F % (add-to-cart rate on organic sessions)
 import gspread
 from test_tab_writer import _day_label
 
-DEEP_DIVE_TAB = "Product Deep Dive"
+DEEP_DIVE_TAB = "Product_Deep_Dive"
 
 
 def _find_date_row(ws, date_str: str) -> "int | None":

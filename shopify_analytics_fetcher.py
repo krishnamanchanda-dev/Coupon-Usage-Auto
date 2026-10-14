@@ -54,14 +54,11 @@ def fetch_session_metrics(date_str: str, token: str) -> dict:
     # `data` is a JSON string from Shopify — parse it
     import json as _json
     raw_data = aq.get("data", "")
+    print(f"  DEBUG sessions raw_data type={type(raw_data).__name__} value={str(raw_data)[:300]}")
     if isinstance(raw_data, str):
         data = _json.loads(raw_data) if raw_data else {}
-        if not data:
-            print(f"  DEBUG analyticsQuery raw response: {aq}")
     else:
         data = raw_data or {}
-        if not data:
-            print(f"  DEBUG analyticsQuery raw response: {aq}")
 
     # Structure: {"columns": [...], "rowData": [["101319"]], "totals": {...}}
     # With a simple aggregate query (no TIMESERIES), rowData has one row.
@@ -146,6 +143,7 @@ def fetch_returning_customer_rate(date_str: str, token: str) -> float:
 
     import json as _json
     raw_data = aq.get("data", "")
+    print(f"  DEBUG returning_rate raw_data type={type(raw_data).__name__} value={str(raw_data)[:300]}")
     data = _json.loads(raw_data) if isinstance(raw_data, str) and raw_data else (raw_data or {})
 
     # Try totals first
