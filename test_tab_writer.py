@@ -609,7 +609,7 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
         "FREELIPSTICK", "MODERN20", "FREEMAKEUPVANITY",
         "FREEVANITY", "LUXEVANITY", "FREEPERFUME",
     }
-    SHOW_DISC_BUCKETS = {"pp", "others", "excluded"}
+    SHOW_DISC_BUCKETS: set = set()  # no group headers ever show disc amt
 
     try:
         ws = sh.worksheet(EMAIL_DATA_TAB)
@@ -685,13 +685,12 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
             disc_val = round(r["total_discount_amount"] * 0.25, 0)
             if cat in BUCKET_KEYS:
                 bucket_details[cat].append([
-                    "bucket_detail", r["coupon_code"], r["times_used"], "",
-                    disc_val if cat in SHOW_DISC_BUCKETS else "",
+                    "bucket_detail", r["coupon_code"], r["times_used"], "", "",
                 ])
             elif cat == "excluded":
                 excluded_total_disc += r["total_discount_amount"]
                 bucket_details["excluded"].append([
-                    "bucket_detail", r["coupon_code"], r["times_used"], "", disc_val,
+                    "bucket_detail", r["coupon_code"], r["times_used"], "", "",
                 ])
         for k in list(BUCKET_KEYS) + ["excluded"]:
             bucket_details[k].sort(key=lambda x: x[2], reverse=True)
@@ -718,13 +717,11 @@ def write_email_data_tab(sh, aggregated: dict, flat_rows: list = None) -> None:
     for k in BUCKET_KEYS:
         if buckets[k]["count"] == 0:
             continue
-        disc = buckets[k]["disc"] if k in SHOW_DISC_BUCKETS else ""
-        all_rows.append(["bucket_header", BUCKET_LABEL[k], buckets[k]["count"], pcts[k], disc])
+        all_rows.append(["bucket_header", BUCKET_LABEL[k], buckets[k]["count"], pcts[k], ""])
         all_rows.extend(bucket_details.get(k, []))
 
     if excluded_count > 0:
-        excl_disc = round(excluded_total_disc * 0.25, 0)
-        all_rows.append(["bucket_header", BUCKET_LABEL["excluded"], excluded_count, excl_pct, excl_disc])
+        all_rows.append(["bucket_header", BUCKET_LABEL["excluded"], excluded_count, excl_pct, ""])
         all_rows.extend(bucket_details.get("excluded", []))
 
     ws.update("A1", all_rows, value_input_option="RAW")
