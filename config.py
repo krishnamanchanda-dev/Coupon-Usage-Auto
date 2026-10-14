@@ -26,11 +26,11 @@ def _today_iso() -> str:
 # Token generation
 TOKEN_API_URL = "https://backgroundprocessor.swiss-custom.site/api/public/token/generate"
 TOKEN_API_KEY = os.getenv("TOKEN_API_KEY", "")
-TOKEN_SCOPES = ["read_all_orders", "read_products", "read_customers", "read_inventory", "read_orders", "read_analytics"]
+TOKEN_SCOPES = ["read_all_orders", "read_products", "read_customers", "read_inventory", "read_orders"]
 
 # Shopify
 SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "swiss-beauty-dev.myshopify.com")
-SHOPIFY_API_VERSION = "2024-01"
+SHOPIFY_API_VERSION = "2024-10"
 ORDERS_PAGE_SIZE = 250  # max allowed by Shopify
 
 # Google Sheets (fill in when API is shared)

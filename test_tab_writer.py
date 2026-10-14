@@ -367,6 +367,36 @@ OVERALL_COUPON_COLS: dict[str, tuple] = {
     '6pcskit':      (165, 166),   # FI  "6 Pcs Kit"
 }
 
+# Mapping: coupon key → 1-indexed column in Overall tab for per-coupon USAGE % (BM–CL).
+OVERALL_PCT_COLS: dict[str, int] = {
+    '__excluded__':  65,   # BM  "Excluded"
+    '4pcs':          66,   # BN  "4Pcs"
+    '3pcs':          67,   # BO  "3Pcs (899)"
+    'freevanity':    68,   # BP  "Vanity 14.6%"
+    'luxevanity':    69,   # BQ  "LUXEVANITY"
+    'freelipstick':  70,   # BR  "Lipstick 5.9%"
+    'lips5':         71,   # BS  "LIPS5"
+    'free5':         72,   # BT  "Free5"
+    'free6':         73,   # BU  "Free6"
+    'freekit':       74,   # BV  "Freekit"
+    'lipluxe':       75,   # BW  "Lipluxe"
+    'save25':        76,   # BX  "SAVE25"
+    'save30':        77,   # BY  "SAVE30"
+    'save35':        78,   # BZ  "SAVE35"
+    'stealdeal':     79,   # CA  "STEALDEAL"
+    'pp':            80,   # CB  "Partnership"
+    '__no_coupon__': 81,   # CC  "No Coupon"
+    'influencer':    82,   # CD  "Influencer/MKTNG"
+    'gpay':          83,   # CE  "Sale Offer"
+    'others':        84,   # CF  "Others"
+    'special4':      85,   # CG  "Special4"
+    'special5':      86,   # CH  "Special5"
+    'special6':      87,   # CI  "Special6"
+    'b3p2':          88,   # CJ  "B3P2"
+    'modern20':      89,   # CK  "MODERN20"
+    'buy3':          90,   # CL  "BUY3"
+}
+
 
 def _ensure_overall_excluded_cols(ws, sh) -> None:
     """
@@ -441,6 +471,55 @@ def update_overall_coupon_cols(sh, aggregated: dict) -> None:
         print(f"  Updated coupon cols (CP–FI) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
     else:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for coupon cols.")
+
+
+def update_overall_pct_cols(sh, aggregated: dict) -> None:
+    """Write per-coupon usage % (as decimals) into Overall tab columns BM–CL."""
+    try:
+        ws = sh.worksheet(OVERALL_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping pct col update.")
+        return
+
+    col_a = ws.col_values(1)
+    date_to_row: dict[str, int] = {}
+    for idx, cell_val in enumerate(col_a):
+        d = _parse_cell_date(cell_val)
+        if d:
+            date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
+
+    updates = []
+    for date_str, day in aggregated.items():
+        row_num = date_to_row.get(date_str)
+        if row_num is None:
+            continue
+        total_ord = day["total_orders"]
+        if not total_ord:
+            continue
+
+        # Largest-remainder percentages (same logic as _build_pct_row)
+        no_coupon = max(0, total_ord - day["total_coupon_used"] - day["excluded_count"])
+        all_keys = list(ALL_COLUMNS) + ["__excluded__", "__no_coupon__"]
+        all_counts = {k: day["buckets"][k]["count"] for k in ALL_COLUMNS}
+        all_counts["__excluded__"] = day["excluded_count"]
+        all_counts["__no_coupon__"] = no_coupon
+        exact = {k: all_counts[k] / total_ord * 1000 for k in all_keys}
+        floored = {k: int(v) for k, v in exact.items()}
+        remainder = {k: exact[k] - floored[k] for k in exact}
+        extra = 1000 - sum(floored.values())
+        for k in sorted(remainder, key=lambda k: remainder[k], reverse=True)[:extra]:
+            floored[k] += 1
+
+        for key, col_num in OVERALL_PCT_COLS.items():
+            pct_decimal = floored.get(key, 0) / 1000  # e.g. 0.223
+            cell = gspread.utils.rowcol_to_a1(row_num, col_num)
+            updates.append({"range": cell, "values": [[pct_decimal]]})
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print(f"  Updated pct cols (BM–CL) in '{OVERALL_TAB_NAME}' for {len(aggregated)} date(s).")
+    else:
+        print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for pct cols.")
 
 
 def update_overall_tab(sh, aggregated: dict) -> None:
@@ -885,6 +964,7 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
         print("  All dates already present — nothing to append.")
         update_overall_tab(sh, aggregated)
         update_overall_coupon_cols(sh, aggregated)
+        update_overall_pct_cols(sh, aggregated)
         write_email_data_tab(sh, aggregated, flat_rows)
         return
 
@@ -1102,6 +1182,9 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
 
     print(f"\n[5b] Updating Overall tab coupon columns (CP–FH)...")
     update_overall_coupon_cols(sh, aggregated)
+
+    print(f"\n[5c] Updating Overall tab pct columns (BM–CL)...")
+    update_overall_pct_cols(sh, aggregated)
 
     print(f"\n[6/6] Writing Email_Data tab for n8n pickup...")
     write_email_data_tab(sh, aggregated, flat_rows)
