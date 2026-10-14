@@ -37,11 +37,12 @@ PCT_HEADER_ROW   = PCT_SECTION_ROW + 1                    # "Date | SAVE30 | …
 PCT_DATA_START   = PCT_SECTION_ROW + 2                    # first % data row
 DATE_COL         = 0   # column A (0-indexed)
 TOTAL_COL        = 1   # column B: "Coupons Used" (0-indexed)
-# Summary columns C, D, E (0-indexed 2, 3, 4)
-TOTAL_ORDERS_COL = 2   # column C: Total Orders
-EXCLUDED_COL     = 3   # column D: Excluded Count
-NO_COUPON_COL    = 4   # column E: No Coupon Count
-COUPON_START_COL = 5   # column F onwards: coupon pairs (0-indexed)
+COUPON_PCT_COL   = 2   # column C: "Coupon Usage %" (0-indexed)
+# Summary columns D, E, F (0-indexed 3, 4, 5)
+TOTAL_ORDERS_COL = 3   # column D: Total Orders
+EXCLUDED_COL     = 4   # column E: Excluded Count
+NO_COUPON_COL    = 5   # column F: No Coupon Count
+COUPON_START_COL = 6   # column G onwards: coupon pairs (0-indexed)
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 YELLOW = {"red": 1.0,  "green": 0.95, "blue": 0.20}
@@ -136,7 +137,7 @@ def _find_tab_state(ws) -> dict:
         pct_cell = str(col_a[PCT_SECTION_ROW - 1]).strip()
     is_first_run = "COUPON USAGE" not in pct_cell.upper()
 
-    # Detect layout version: new layout has "Total Orders" at column C (0-indexed 2) of header row
+    # Detect layout version: new layout has "Total Orders" at column D (0-indexed 3) of header row
     row3 = ws.row_values(HEADER_ROW) if not is_first_run else []
     old_layout = not is_first_run and (
         len(row3) < COUPON_START_COL or
@@ -896,6 +897,19 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
                     preserved_pct[label] = r
             if preserved_top:
                 print(f"  Preserving {len(preserved_top)} existing row(s): {', '.join(sorted(preserved_top, key=_sort_key_label))}.")
+                # Migrate old-layout rows (5 header cols) to new layout (6 header cols)
+                # by inserting Coupon Usage % at index 2.
+                old_header_cols = COUPON_START_COL - 1  # old layout had one fewer header col
+                for lbl in list(preserved_top.keys()):
+                    r = preserved_top[lbl]
+                    if len(r) > 0 and len(r) < COUPON_START_COL + 1:
+                        try:
+                            tot = float(str(r[TOTAL_ORDERS_COL - 1]).replace(",", "")) if len(r) > TOTAL_ORDERS_COL - 1 else 0
+                            used = float(str(r[TOTAL_COL]).replace(",", "")) if len(r) > TOTAL_COL else 0
+                            pct = used / tot if tot > 0 else 0.0
+                        except (ValueError, TypeError):
+                            pct = 0.0
+                        preserved_top[lbl] = list(r[:2]) + [pct] + list(r[2:])
 
         ws.clear()
 
@@ -911,8 +925,8 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             }
         }])
 
-        # Coupon header row (includes Total Orders, Excluded, No Coupon after Coupons Used)
-        header_row = ["", "Coupons Used", "Total Orders", "Excluded", "No Coupon"]
+        # Coupon header row (includes Coupon Usage %, Total Orders, Excluded, No Coupon after Coupons Used)
+        header_row = ["", "Coupons Used", "Coupon Usage %", "Total Orders", "Excluded", "No Coupon"]
         for col_key in ALL_COLUMNS:
             header_row.append(_display(col_key))
             header_row.append("")
@@ -924,7 +938,8 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             label = _day_label(date_str)
             day = aggregated[date_str]
             no_coupon = max(0, day["total_orders"] - day["total_coupon_used"] - day["excluded_count"])
-            row = [label, day["total_coupon_used"],
+            pct = day["total_coupon_used"] / day["total_orders"] if day["total_orders"] > 0 else 0.0
+            row = [label, day["total_coupon_used"], pct,
                    day["total_orders"], day["excluded_count"], no_coupon]
             for col_key in ALL_COLUMNS:
                 b = day["buckets"][col_key]
@@ -975,15 +990,16 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             requests.append(_merge_request(sheet_id, hdr0, lc, lc + 2))
             requests.append(_border_request(sheet_id, hdr0, hdr0 + 1, lc, lc + 2, BORDER_DARK))
 
-        # Summary columns (Total Orders, Excluded, No Coupon) — cyan bg, bold
+        # Summary columns (Coupon Usage %, Total Orders, Excluded, No Coupon) — cyan bg, bold
         requests.append(_range_format(sheet_id, hdr0, hdr0 + 1,
-                                       TOTAL_ORDERS_COL, NO_COUPON_COL + 1,
+                                       COUPON_PCT_COL, NO_COUPON_COL + 1,
                                        bg=CYAN, bold=True, font_size=11,
                                        h_align="CENTER", v_align="MIDDLE"))
 
         # Column widths
         requests.append(_set_col_width(sheet_id, 0, 72))
         requests.append(_set_col_width(sheet_id, TOTAL_COL, 100))
+        requests.append(_set_col_width(sheet_id, COUPON_PCT_COL, 110))
         requests.append(_set_col_width(sheet_id, TOTAL_ORDERS_COL, 100))
         requests.append(_set_col_width(sheet_id, EXCLUDED_COL, 90))
         requests.append(_set_col_width(sheet_id, NO_COUPON_COL, 100))
@@ -1032,7 +1048,8 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
             label = _day_label(date_str)
             day = aggregated[date_str]
             no_coupon = max(0, day["total_orders"] - day["total_coupon_used"] - day["excluded_count"])
-            top_row = [label, day["total_coupon_used"],
+            pct = day["total_coupon_used"] / day["total_orders"] if day["total_orders"] > 0 else 0.0
+            top_row = [label, day["total_coupon_used"], pct,
                        day["total_orders"], day["excluded_count"], no_coupon]
             for col_key in ALL_COLUMNS:
                 b = day["buckets"][col_key]
