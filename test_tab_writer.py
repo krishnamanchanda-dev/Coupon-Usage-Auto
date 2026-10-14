@@ -809,12 +809,16 @@ def _build_pct_row(date_str: str, day: dict) -> list:
 def _format_data_row(sheet_id, row_0: int, row_idx: int, total_data_cols: int, n_cols: int) -> list:
     """Return formatting requests for one data row in the top table."""
     NUM_FMT = {"type": "NUMBER", "pattern": "#,##0"}
+    PCT_FMT = {"type": "NUMBER", "pattern": "0.0%"}
     bg = WHITE if row_idx % 2 == 0 else LIGHT_GREY
     reqs = []
     reqs.append(_range_format(sheet_id, row_0, row_0 + 1, 0, 1,
                                bg=bg, bold=False, font_size=10, h_align="LEFT"))
     reqs.append(_range_format(sheet_id, row_0, row_0 + 1, TOTAL_COL, total_data_cols,
                                bg=bg, bold=False, font_size=10, h_align="RIGHT", number_fmt=NUM_FMT))
+    # Override Coupon Usage % column with percentage format (not integer)
+    reqs.append(_range_format(sheet_id, row_0, row_0 + 1, COUPON_PCT_COL, COUPON_PCT_COL + 1,
+                               bg=bg, bold=False, font_size=10, h_align="RIGHT", number_fmt=PCT_FMT))
     reqs.append(_border_request(sheet_id, row_0, row_0 + 1, 0, total_data_cols, BORDER))
     reqs.append(_set_row_height(sheet_id, row_0, 22))
     for j in range(n_cols):
