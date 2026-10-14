@@ -26,7 +26,7 @@ def _today_iso() -> str:
 # Token generation
 TOKEN_API_URL = "https://backgroundprocessor.swiss-custom.site/api/public/token/generate"
 TOKEN_API_KEY = os.getenv("TOKEN_API_KEY", "")
-TOKEN_SCOPES = ["read_all_orders", "read_products", "read_customers", "read_inventory", "read_orders"]
+TOKEN_SCOPES = ["read_all_orders", "read_products", "read_customers", "read_inventory", "read_orders", "read_analytics"]
 
 # Shopify
 SHOP_DOMAIN = os.getenv("SHOP_DOMAIN", "swiss-beauty-dev.myshopify.com")
