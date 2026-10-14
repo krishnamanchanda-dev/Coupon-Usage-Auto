@@ -461,13 +461,19 @@ def update_overall_tab(sh, aggregated: dict) -> None:
             date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
 
     updates = []
-    for date_str, day in aggregated.items():
+    for date_str in aggregated:
         row_num = date_to_row.get(date_str)
         if row_num is None:
             print(f"  WARNING: {date_str} not found in Overall tab col A — skipping.")
             continue
-        total_orders = day["total_orders"]
-        ratio = (day["total_coupon_used"] / total_orders) if total_orders > 0 else 0.0
+        # Read total_orders from Coupon Usage tab col D — same source as the emailer
+        tab_row = _read_coupon_usage_row(sh, date_str)
+        if tab_row is None:
+            print(f"  WARNING: {date_str} not found in Coupon Usage tab — skipping AW.")
+            continue
+        total_orders = tab_row["total_orders"]
+        coupons_used = tab_row["total_coupon_used"]
+        ratio = (coupons_used / total_orders) if total_orders > 0 else 0.0
         cell = gspread.utils.rowcol_to_a1(row_num, AW_COL)  # e.g. "AW5"
         updates.append({"range": cell, "values": [[ratio]]})
 
