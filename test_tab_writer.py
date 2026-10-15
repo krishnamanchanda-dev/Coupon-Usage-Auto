@@ -395,6 +395,7 @@ OVERALL_PCT_COLS: dict[str, int] = {
     'b3p2':          88,   # CJ  "B3P2"
     'modern20':      89,   # CK  "MODERN20"
     'buy3':          90,   # CL  "BUY3"
+    'buy4':          91,   # CM  "BUY4"
 }
 
 
