@@ -512,9 +512,9 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
             floored[k] += 1
 
         for key, col_num in OVERALL_PCT_COLS.items():
-            pct_decimal = floored.get(key, 0) / 1000  # e.g. 0.223
+            pct_str = f"{floored.get(key, 0) / 10:.1f}%"  # e.g. "22.3%"
             cell = gspread.utils.rowcol_to_a1(row_num, col_num)
-            updates.append({"range": cell, "values": [[pct_decimal]]})
+            updates.append({"range": cell, "values": [[pct_str]]})
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
