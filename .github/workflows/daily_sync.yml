@@ -2,8 +2,8 @@ name: Daily Coupon Sync
 
 on:
   schedule:
-    # 8:00 AM IST = 02:30 UTC
-    - cron: '30 2 * * *'
+    # 9:00 AM IST = 03:30 UTC
+    - cron: '30 3 * * *'
   workflow_dispatch:  # allow manual trigger
 
 jobs:
