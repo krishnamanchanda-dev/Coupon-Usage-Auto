@@ -454,9 +454,13 @@ def update_overall_coupon_cols(sh, aggregated: dict) -> None:
         no_coupon = max(0, day["total_orders"] - day["total_coupon_used"] - day["excluded_count"])
         for key, (count_col, amount_col) in OVERALL_COUPON_COLS.items():
             if key == "__excluded__":
-                count = day["excluded_count"]
+                # Merged into CQ (no_coupon col) — leave CP blank
+                cp_cell = gspread.utils.rowcol_to_a1(row_num, count_col)
+                updates.append({"range": cp_cell, "values": [[""]]})
+                continue
             elif key == "__no_coupon__":
-                count = no_coupon
+                # CQ = excluded + no coupon combined
+                count = no_coupon + day["excluded_count"]
             else:
                 b = buckets.get(key, {"count": 0, "disc_amt": 0.0})
                 count = b["count"]
@@ -512,7 +516,17 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
             floored[k] += 1
 
         for key, col_num in OVERALL_PCT_COLS.items():
-            pct_str = f"{floored.get(key, 0) / 10:.1f}%"  # e.g. "22.3%"
+            if key == "__excluded__":
+                # Merged into CC (no_coupon col) — leave BM blank
+                cell = gspread.utils.rowcol_to_a1(row_num, col_num)
+                updates.append({"range": cell, "values": [[""]]})
+                continue
+            if key == "__no_coupon__":
+                # CC = excluded % + no coupon % combined
+                combined = floored.get("__excluded__", 0) + floored.get("__no_coupon__", 0)
+                pct_str = f"{combined / 10:.1f}%"
+            else:
+                pct_str = f"{floored.get(key, 0) / 10:.1f}%"
             cell = gspread.utils.rowcol_to_a1(row_num, col_num)
             updates.append({"range": cell, "values": [[pct_str]]})
 
