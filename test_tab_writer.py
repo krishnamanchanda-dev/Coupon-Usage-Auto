@@ -975,6 +975,12 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     existing_top = set(state["top_date_labels"])
     new_dates = [d for d in sorted_dates if _day_label(d) not in existing_top]
 
+    # Always rewrite the latest date to catch cases where an early cron run
+    # wrote partial data and a re-run needs to overwrite with the full day.
+    latest_date = sorted_dates[-1] if sorted_dates else None
+    if latest_date and latest_date not in new_dates:
+        new_dates.append(latest_date)
+
     if not new_dates and not is_first_run:
         print("  All dates already present — nothing to append.")
         update_overall_tab(sh, aggregated)
