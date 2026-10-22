@@ -960,11 +960,7 @@ def write_test_tab(flat_rows: list, total_orders_by_day: dict) -> None:
     aggregated = aggregate_for_tab(flat_rows, total_orders_by_day)
     sorted_dates = sorted(aggregated.keys())
 
-    # Override total_orders with authoritative values from Overall tab col C
-    overall_orders = _read_overall_orders(sh)
-    for date_str, day in aggregated.items():
-        if date_str in overall_orders:
-            day["total_orders"] = overall_orders[date_str]
+    # total_orders comes directly from Shopify API (total_orders_by_day)
 
     n_cols = len(ALL_COLUMNS)
     total_data_cols = COUPON_START_COL + n_cols * 2
