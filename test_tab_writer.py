@@ -387,7 +387,7 @@ OVERALL_PCT_COLS: dict[str, int] = {
     'pp':            80,   # CB  "Partnership"
     '__no_coupon__': 81,   # CC  "No Coupon"
     'influencer':    82,   # CD  "Influencer/MKTNG"
-    'gpay':          83,   # CE  "Sale Offer"
+    '__sale_offer__': 83,  # CE  "Sale Offer" = buy4+buy5+buy6 combined
     'others':        84,   # CF  "Others"
     'special4':      85,   # CG  "Special4"
     'special5':      86,   # CH  "Special5"
@@ -397,6 +397,7 @@ OVERALL_PCT_COLS: dict[str, int] = {
     'buy3':          90,   # CL  "BUY3"
     'buy4':          91,   # CM  "BUY4"
     'buy5':          92,   # CN  "BUY5"
+    'buy6':          93,   # CO  "BUY6"
 }
 
 
@@ -522,9 +523,13 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
                 cell = gspread.utils.rowcol_to_a1(row_num, col_num)
                 updates.append({"range": cell, "values": [[""]]})
                 continue
-            if key == "__no_coupon__":
+            elif key == "__no_coupon__":
                 # CC = excluded % + no coupon % combined
                 combined = floored.get("__excluded__", 0) + floored.get("__no_coupon__", 0)
+                pct_str = f"{combined / 10:.1f}%"
+            elif key == "__sale_offer__":
+                # CE = buy4 + buy5 + buy6 combined
+                combined = floored.get("buy4", 0) + floored.get("buy5", 0) + floored.get("buy6", 0)
                 pct_str = f"{combined / 10:.1f}%"
             else:
                 pct_str = f"{floored.get(key, 0) / 10:.1f}%"
