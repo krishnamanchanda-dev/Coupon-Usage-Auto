@@ -18,7 +18,7 @@ from categorizer import (
     NAMED_COUPONS, NAMED_ORDER, BUCKET_KEYS, BUCKET_DISPLAY, ALL_COLUMNS, categorize
 )
 
-SPREADSHEET_ID = os.getenv("SHEET_ID", "1RBIngrxsQR2fWoksu83OU5YGCW5Idp7DLiVnTKp04fE")
+SPREADSHEET_ID = os.getenv("SHEET_ID", "1jYbspKgVBmItpCGh8zKztv7yzbRZ9a4hEDYpoYdl4AA")
 SERVICE_ACCOUNT_FILE = "service_account.json"
 TEST_TAB_NAME = "Coupon Usage"
 OVERALL_TAB_NAME = "Overall"
