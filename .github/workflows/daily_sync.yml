@@ -4,7 +4,16 @@ on:
   schedule:
     # 7:00 AM IST = 01:30 UTC
     - cron: '30 1 * * *'
-  workflow_dispatch:  # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      date_min:
+        description: 'Start date (IST) e.g. 2026-11-12T00:00:00+05:30'
+        required: false
+        default: ''
+      date_max:
+        description: 'End date (IST) e.g. 2026-11-12T23:59:59+05:30'
+        required: false
+        default: ''
 
 jobs:
   sync:
@@ -31,4 +40,6 @@ jobs:
           SHOP_DOMAIN: ${{ secrets.SHOP_DOMAIN }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
+          ORDERS_CREATED_AT_MIN: ${{ github.event.inputs.date_min }}
+          ORDERS_CREATED_AT_MAX: ${{ github.event.inputs.date_max }}
         run: python main.py
