@@ -43,5 +43,5 @@ SHEET_ID = os.getenv("SHEET_ID", "")
 # Override via env vars for backfill: e.g. ORDERS_CREATED_AT_MIN=2024-10-11T00:00:00Z
 # Default: yesterday's full day for daily runs.
 # For backfill from Oct 11 onward, set ORDERS_CREATED_AT_MIN=2026-10-11T00:00:00Z
-ORDERS_CREATED_AT_MIN = os.getenv("ORDERS_CREATED_AT_MIN", _yesterday_iso())
-ORDERS_CREATED_AT_MAX = os.getenv("ORDERS_CREATED_AT_MAX", _today_iso())
+ORDERS_CREATED_AT_MIN = os.getenv("ORDERS_CREATED_AT_MIN") or _yesterday_iso()
+ORDERS_CREATED_AT_MAX = os.getenv("ORDERS_CREATED_AT_MAX") or _today_iso()
