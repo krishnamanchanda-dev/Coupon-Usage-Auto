@@ -1,7 +1,9 @@
 import os
 import json
 import time
+import warnings
 import requests
+import urllib3
 from config import TOKEN_API_URL, TOKEN_API_KEY, TOKEN_SCOPES
 
 # Cache file lives in /tmp so it's ephemeral and never committed
@@ -36,15 +38,18 @@ def get_shopify_token() -> str:
         print("  Token loaded from cache.")
         return cached
 
-    response = requests.post(
-        TOKEN_API_URL,
-        headers={
-            "Authorization": TOKEN_API_KEY,
-            "Content-Type": "application/json",
-        },
-        json={"scopes": TOKEN_SCOPES},
-        timeout=30,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+        response = requests.post(
+            TOKEN_API_URL,
+            headers={
+                "Authorization": TOKEN_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json={"scopes": TOKEN_SCOPES},
+            timeout=30,
+            verify=False,
+        )
     response.raise_for_status()
     data = response.json()
     if not data.get("ok"):
