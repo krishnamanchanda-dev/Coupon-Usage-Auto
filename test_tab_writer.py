@@ -545,6 +545,7 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
 
 def update_overall_tab(sh, aggregated: dict) -> None:
     """Write coupons_used / total_orders ratio to column AW of Overall tab per date."""
+    print(f"  [AW] aggregated keys: {sorted(aggregated.keys())}")
     try:
         ws = sh.worksheet(OVERALL_TAB_NAME)
     except gspread.exceptions.WorksheetNotFound:
@@ -552,6 +553,7 @@ def update_overall_tab(sh, aggregated: dict) -> None:
         return
 
     col_a = ws.col_values(1)  # 1-indexed; returns list of strings
+    print(f"  [AW] Overall tab col A has {len(col_a)} cells")
 
     # Map ISO date string → 1-indexed row number
     date_to_row: dict[str, int] = {}
@@ -559,6 +561,8 @@ def update_overall_tab(sh, aggregated: dict) -> None:
         d = _parse_cell_date(cell_val)
         if d:
             date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
+
+    print(f"  [AW] date_to_row has {len(date_to_row)} entries, last 5: {dict(list(sorted(date_to_row.items()))[-5:])}")
 
     updates = []
     for date_str in aggregated:
@@ -575,11 +579,15 @@ def update_overall_tab(sh, aggregated: dict) -> None:
         coupons_used = tab_row["total_coupon_used"]
         ratio = (coupons_used / total_orders) if total_orders > 0 else 0.0
         cell = gspread.utils.rowcol_to_a1(row_num, AW_COL)  # e.g. "AW5"
+        print(f"  [AW] {date_str} → row {row_num}, orders={total_orders}, coupons={coupons_used}, ratio={ratio:.4f}, cell={cell}")
         updates.append({"range": cell, "values": [[ratio]]})
 
     if updates:
-        ws.batch_update(updates, value_input_option="USER_ENTERED")
-        print(f"  Updated column AW in '{OVERALL_TAB_NAME}' for {len(updates)} date(s).")
+        try:
+            ws.batch_update(updates, value_input_option="USER_ENTERED")
+            print(f"  Updated column AW in '{OVERALL_TAB_NAME}' for {len(updates)} date(s).")
+        except Exception as e:
+            print(f"  ERROR in batch_update for AW: {e}")
     else:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' tab.")
 
