@@ -544,14 +544,18 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
 
 
 def _overall_col_a(ws) -> list:
-    """Read Overall tab col A with FORMATTED_VALUE so date cells return display strings.
+    """Read Overall tab col A as formatted strings.
 
-    gspread 6.x changed the default render option to UNFORMATTED_VALUE, which
-    returns serial numbers for date-formatted cells instead of their display
-    strings (e.g. "1 Nov"). Explicitly requesting FORMATTED_VALUE restores the
-    expected "D Mon" strings that _parse_cell_date knows how to handle.
+    Uses ws.get() with FORMATTED_VALUE which is reliable across gspread versions.
+    ws.col_values() with value_render_option string is silently ignored in some
+    gspread 6.x environments (expects enum, not string), falling back to
+    UNFORMATTED_VALUE which returns serial numbers for date cells instead of
+    their display strings like "1 Nov".
     """
-    return ws.col_values(1, value_render_option="FORMATTED_VALUE")
+    rows = ws.get("A1:A200", value_render_option="FORMATTED_VALUE")
+    vals = [row[0] if row else "" for row in rows]
+    print(f"  [Overall col A] {len(vals)} cells; rows 35-50: {vals[35:50]}")
+    return vals
 
 
 def update_overall_tab(sh, aggregated: dict) -> None:
