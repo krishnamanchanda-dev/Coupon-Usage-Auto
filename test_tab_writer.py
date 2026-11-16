@@ -286,28 +286,41 @@ def _set_col_width(sheet_id, col_idx, width_px) -> dict:
     }
 
 
+_MONTH_ABBR = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'june': 6,
+    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+}
+
+
 def _parse_cell_date(cell_val) -> "datetime.date | None":
     """Try to parse a spreadsheet cell value as a date. Returns date or None."""
     if not cell_val:
         return None
     s = str(cell_val).strip()
-    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y",
-                "%d %b %Y", "%d-%b-%Y", "%d %B %Y"]:
+    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"]:
         try:
             return datetime.datetime.strptime(s, fmt).date()
         except ValueError:
             pass
-    # "11 Oct" / "1 Oct" — no year; infer from current IST date
-    for fmt in ["%d %b", "%d %B"]:
+    # "15 Nov" / "1 Nov 2026" — use hardcoded map to avoid locale-dependent %b strptime
+    # (strptime %b fails on GitHub Actions ubuntu-latest with non-English locale)
+    _IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    today = datetime.datetime.now(_IST).date()
+    parts = s.replace('-', ' ').split()
+    if len(parts) in (2, 3):
         try:
-            parsed = datetime.datetime.strptime(s, fmt)
-            today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date()
-            # Try current year; if that puts the date more than 6 months in the future, use last year
-            candidate = parsed.replace(year=today.year).date()
-            if (candidate - today).days > 180:
-                candidate = parsed.replace(year=today.year - 1).date()
-            return candidate
-        except ValueError:
+            day = int(parts[0])
+            mon = _MONTH_ABBR.get(parts[1].lower())
+            if mon:
+                if len(parts) == 3:
+                    return datetime.date(int(parts[2]), mon, day)
+                candidate = datetime.date(today.year, mon, day)
+                if (candidate - today).days > 180:
+                    candidate = datetime.date(today.year - 1, mon, day)
+                return candidate
+        except (ValueError, KeyError):
             pass
     # Google Sheets stores dates as serial numbers (epoch = 1899-12-30)
     try:
