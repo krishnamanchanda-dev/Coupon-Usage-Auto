@@ -439,7 +439,7 @@ def update_overall_coupon_cols(sh, aggregated: dict) -> None:
 
     _ensure_overall_excluded_cols(ws, sh)
 
-    col_a = ws.col_values(1)
+    col_a = _overall_col_a(ws)
     date_to_row: dict[str, int] = {}
     for idx, cell_val in enumerate(col_a):
         d = _parse_cell_date(cell_val)
@@ -488,7 +488,7 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
         print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping pct col update.")
         return
 
-    col_a = ws.col_values(1)
+    col_a = _overall_col_a(ws)
     date_to_row: dict[str, int] = {}
     for idx, cell_val in enumerate(col_a):
         d = _parse_cell_date(cell_val)
@@ -543,17 +543,26 @@ def update_overall_pct_cols(sh, aggregated: dict) -> None:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' for pct cols.")
 
 
+def _overall_col_a(ws) -> list:
+    """Read Overall tab col A with FORMATTED_VALUE so date cells return display strings.
+
+    gspread 6.x changed the default render option to UNFORMATTED_VALUE, which
+    returns serial numbers for date-formatted cells instead of their display
+    strings (e.g. "1 Nov"). Explicitly requesting FORMATTED_VALUE restores the
+    expected "D Mon" strings that _parse_cell_date knows how to handle.
+    """
+    return ws.col_values(1, value_render_option="FORMATTED_VALUE")
+
+
 def update_overall_tab(sh, aggregated: dict) -> None:
     """Write coupons_used / total_orders ratio to column AW of Overall tab per date."""
-    print(f"  [AW] aggregated keys: {sorted(aggregated.keys())}")
     try:
         ws = sh.worksheet(OVERALL_TAB_NAME)
     except gspread.exceptions.WorksheetNotFound:
         print(f"  WARNING: '{OVERALL_TAB_NAME}' tab not found — skipping Overall update.")
         return
 
-    col_a = ws.col_values(1)  # 1-indexed; returns list of strings
-    print(f"  [AW] Overall tab col A has {len(col_a)} cells")
+    col_a = _overall_col_a(ws)
 
     # Map ISO date string → 1-indexed row number
     date_to_row: dict[str, int] = {}
@@ -562,32 +571,23 @@ def update_overall_tab(sh, aggregated: dict) -> None:
         if d:
             date_to_row[d.strftime("%Y-%m-%d")] = idx + 1
 
-    print(f"  [AW] date_to_row has {len(date_to_row)} entries, last 5: {dict(list(sorted(date_to_row.items()))[-5:])}")
-
     updates = []
-    for date_str in aggregated:
+    for date_str, day in aggregated.items():
         row_num = date_to_row.get(date_str)
         if row_num is None:
             print(f"  WARNING: {date_str} not found in Overall tab col A — skipping.")
             continue
-        # Read total_orders from Coupon Usage tab col D — same source as the emailer
-        tab_row = _read_coupon_usage_row(sh, date_str)
-        if tab_row is None:
-            print(f"  WARNING: {date_str} not found in Coupon Usage tab — skipping AW.")
+        total_orders = day["total_orders"]
+        coupons_used = day["total_coupon_used"]
+        if not total_orders:
             continue
-        total_orders = tab_row["total_orders"]
-        coupons_used = tab_row["total_coupon_used"]
-        ratio = (coupons_used / total_orders) if total_orders > 0 else 0.0
-        cell = gspread.utils.rowcol_to_a1(row_num, AW_COL)  # e.g. "AW5"
-        print(f"  [AW] {date_str} → row {row_num}, orders={total_orders}, coupons={coupons_used}, ratio={ratio:.4f}, cell={cell}")
+        ratio = coupons_used / total_orders
+        cell = gspread.utils.rowcol_to_a1(row_num, AW_COL)
         updates.append({"range": cell, "values": [[ratio]]})
 
     if updates:
-        try:
-            ws.batch_update(updates, value_input_option="USER_ENTERED")
-            print(f"  Updated column AW in '{OVERALL_TAB_NAME}' for {len(updates)} date(s).")
-        except Exception as e:
-            print(f"  ERROR in batch_update for AW: {e}")
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print(f"  Updated column AW in '{OVERALL_TAB_NAME}' for {len(updates)} date(s).")
     else:
         print(f"  No matching dates found in '{OVERALL_TAB_NAME}' tab.")
 
@@ -881,8 +881,8 @@ def _read_overall_orders(sh) -> dict:
         ws = sh.worksheet(OVERALL_TAB_NAME)
     except gspread.exceptions.WorksheetNotFound:
         return {}
-    col_a = ws.col_values(1)
-    col_c = ws.col_values(3)
+    col_a = _overall_col_a(ws)
+    col_c = ws.col_values(3, value_render_option="FORMATTED_VALUE")
     result = {}
     for date_val, order_val in zip(col_a, col_c):
         d = _parse_cell_date(date_val)
