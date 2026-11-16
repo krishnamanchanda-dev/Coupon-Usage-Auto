@@ -566,9 +566,7 @@ def _overall_col_a(ws) -> list:
     their display strings like "1 Nov".
     """
     rows = ws.get("A1:A200", value_render_option="FORMATTED_VALUE")
-    vals = [row[0] if row else "" for row in rows]
-    print(f"  [Overall col A] {len(vals)} cells; rows 35-50: {vals[35:50]}")
-    return vals
+    return [row[0] if row else "" for row in rows]
 
 
 def update_overall_tab(sh, aggregated: dict) -> None:
